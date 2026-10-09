@@ -1,0 +1,81 @@
+name: Build Windows Application
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Verify Environment
+        run: |
+          flutter doctor -v
+
+      - name: Enable Windows Desktop Support
+        run: |
+          flutter config --enable-windows-desktop
+
+      - name: Install Dependencies
+        run: |
+          flutter pub get
+
+      - name: Run Static Analysis
+        run: |
+          flutter analyze
+
+      - name: Run Unit & Integration Tests
+        run: |
+          flutter test
+
+      - name: Build Windows Release Application
+        run: |
+          flutter build windows --release
+
+      - name: Package Release Distribution
+        shell: pwsh
+        run: |
+          $releaseDir = "build/windows/x64/runner/Release"
+          
+          # Ensure standalone sqlite3.dll is present next to executable
+          if (Test-Path "sqlite3.dll") {
+            Copy-Item -Path "sqlite3.dll" -Destination "$releaseDir/sqlite3.dll" -Force
+          }
+          
+          # Create archive of the Release directory
+          Compress-Archive -Path "$releaseDir/*" -DestinationPath "AppGrowthStudio-Windows-x64.zip" -Force
+          
+          Get-Item "AppGrowthStudio-Windows-x64.zip" | Select-Object Name, Length
+
+      - name: Upload Build Artifact to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppGrowthStudio-Windows-x64
+          path: AppGrowthStudio-Windows-x64.zip
+          retention-days: 30
+
+      - name: Attach Binary to GitHub Release (Tag or Release event)
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AppGrowthStudio-Windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
