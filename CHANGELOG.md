@@ -189,4 +189,31 @@ All notable changes to this project will be documented in this file.
   * 9 scenario tests covering all input modes, export, persistence, error handling, and dimension verification.
   * All 58 tests passing; 0 issues on `flutter analyze`.
 
+## [2.2.0] - Genuine MP4 Export, Storyboard Text Preservation & Visual Library (Completed)
+
+### Added
+* **Part B: Storyboard & Voice-Over Text Preservation:**
+  * **Independent Text Fields:** Separated `sceneTitle`, `onScreenText`, `voiceOverNarration`, `subtitleText`, `visualDescription`, and `callToAction` into discrete state properties in `VideoSceneModel`.
+  * **Immutable Original Input:** Preserved user text in `originalInputText` without silent shortening or overwriting.
+  * **Stable Scene Identity:** Unique `id` per scene and persistent controllers keyed by `${scene.id}_$field` with `ValueKey(scene.id)` preventing text jumping or controller collision during reordering, tab switching, and regeneration.
+  * **Granular Regeneration System:** Independent actions for "Regenerate Visual Only", "Regenerate Narration Only", "Regenerate Captions Only", "Regenerate Full Scene", and guarded "Regenerate Entire Storyboard" with explicit confirmation dialog.
+  * **Asynchronous Edit Protection:** Stale AI generation responses cannot overwrite newer user edits using request ID and version tracking.
+* **Part A: Genuine MP4 Video Rendering & Native Export Pipeline:**
+  * **Real FFmpeg MP4 Compilation:** Direct Windows FFmpeg invocation (`H.264`, `AAC`, 9:16, 16:9, 1:1, 1080p, 720p) compiling generated canvas frames, transitions, narration audio, and background music.
+  * **Strict Playback & Stream Verification (`FfmpegService.probeVideo`):** Validates actual video streams, non-zero duration, dimensions, and file size before marking any render as successful.
+  * **Accurate Rendering Status Lifecycle:** Distinct phases: `storyboardReady`, `visualAssetsReady`, `framesGenerated`, `encodingInProgress`, `videoEncodedSuccessfully`, `exported`, `failed`.
+  * **Native Windows Save File Dialog:** "Export Video to Computer" saves verified `.mp4` files with native Windows SaveFileDialog, providing direct "Play Video in Default Player" and "Open Export Folder" buttons.
+* **Part C: Visual Sources & Built-in Procedural Library (`VisualLibraryService`):**
+  * **Visual Sources Panel:** Dedicated multi-source configuration panel in Video Template Studio for app URLs, screenshots, clips, text prompts, and the visual library.
+  * **Curated Procedural Palettes:** 8 modern gradient palettes (Midnight Indigo, Cyber Neon, Sunset Coral, Emerald Luxe, Royal Purple, Titanium Dark, Deep Ocean, Solar Amber).
+  * **Geometric Patterns & Motion Backdrops:** Dot Grid, Cyber Grid, Wave Flow, and Isometric Blueprint canvas patterns.
+  * **Domain Vector Icons:** 9 app domain iconography overlays (Productivity, Gaming, Finance, Health, Social, Education, Entertainment, Tools, Shopping).
+  * **Smart Suggestion Engine:** Analyzes scene script semantics and app categories to automatically select appropriate backgrounds, vector icons, and card layouts with offline fallback.
+* **Part D: SQLite Schema v5 Migration:**
+  * Upgraded SQLite schema to version 5 with `original_input_text`, `generated_marketing_script`, and `rendering_phase_status` columns.
+* **Part E: Comprehensive Test Suite Expansion:**
+  * Added `test/text_preservation_test.dart` validating all 9 Part B preservation requirements.
+  * Total test count expanded to **67 passing tests**; **0 issues** on `flutter analyze`.
+
+
 

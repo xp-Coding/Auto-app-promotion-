@@ -65,6 +65,7 @@ class VideoProjectRepository {
   Future<void> updateExportStatus({
     required String id,
     required String status,
+    String? renderingPhaseStatus,
     String? exportedPath,
     int? fileSizeBytes,
   }) async {
@@ -73,6 +74,7 @@ class VideoProjectRepository {
       'export_status': status,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     };
+    if (renderingPhaseStatus != null) updateData['rendering_phase_status'] = renderingPhaseStatus;
     if (exportedPath != null) updateData['exported_file_path'] = exportedPath;
     if (fileSizeBytes != null) updateData['file_size_bytes'] = fileSizeBytes;
 

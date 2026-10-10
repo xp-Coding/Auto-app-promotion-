@@ -2,7 +2,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Database schema definitions and migrations for AppGrowth Studio.
 class DatabaseMigrations {
-  static const int currentVersion = 4;
+  static const int currentVersion = 5;
 
   static Future<void> onCreate(Database db, int version) async {
     final batch = db.batch();
@@ -330,6 +330,9 @@ class DatabaseMigrations {
         total_duration_seconds REAL NOT NULL DEFAULT 15.0,
         scenes TEXT NOT NULL DEFAULT '[]',
         audio_narration_script TEXT NOT NULL DEFAULT '',
+        original_input_text TEXT NOT NULL DEFAULT '',
+        generated_marketing_script TEXT NOT NULL DEFAULT '',
+        rendering_phase_status TEXT NOT NULL DEFAULT 'storyboardReady',
         input_app_url TEXT,
         input_text_prompt TEXT,
         input_media_paths TEXT NOT NULL DEFAULT '[]',
@@ -444,6 +447,19 @@ class DatabaseMigrations {
       ''');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_video_projects_app ON video_projects(app_id);');
       await db.execute('CREATE INDEX IF NOT EXISTS idx_video_projects_status ON video_projects(export_status);');
+    }
+
+    if (oldVersion < 5) {
+      final cols = [
+        "ALTER TABLE video_projects ADD COLUMN original_input_text TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE video_projects ADD COLUMN generated_marketing_script TEXT NOT NULL DEFAULT '';",
+        "ALTER TABLE video_projects ADD COLUMN rendering_phase_status TEXT NOT NULL DEFAULT 'storyboardReady';",
+      ];
+      for (final sql in cols) {
+        try {
+          await db.execute(sql);
+        } catch (_) {}
+      }
     }
   }
 }

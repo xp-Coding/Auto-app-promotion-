@@ -1,101 +1,168 @@
 import 'dart:convert';
+import 'package:uuid/uuid.dart';
 
 class VideoSceneModel {
+  final String id;
   final int sceneNumber;
-  final String title;
-  final String narrationText;
+  final String sceneTitle;
+  final String onScreenText;
+  final String voiceOverNarration;
+  final String subtitleText;
   final String visualDescription;
+  final String? callToAction;
   final double durationSeconds;
   final String? imageAssetPath;
   final String? videoClipPath;
   final double? clipStartTimeSeconds;
   final double? clipEndTimeSeconds;
   final String badgeText;
-  final String? captionText;
   final String transition; // fade, slide, dissolve, cut
   final String fitMode; // contain, cover, fit
+  final String visualSourceType; // user_screenshot, user_clip, store_listing, built_in_library, procedural_graphics, stock_media, plain_color
+  final List<String> visualAssetPaths;
 
   const VideoSceneModel({
+    this.id = '',
     required this.sceneNumber,
-    required this.title,
-    required this.narrationText,
+    String? sceneTitle,
+    String? title,
+    String? onScreenText,
+    String? voiceOverNarration,
+    String? narrationText,
+    String? subtitleText,
+    String? captionText,
     required this.visualDescription,
+    this.callToAction,
     required this.durationSeconds,
     this.imageAssetPath,
     this.videoClipPath,
     this.clipStartTimeSeconds,
     this.clipEndTimeSeconds,
     this.badgeText = '',
-    this.captionText,
     this.transition = 'fade',
     this.fitMode = 'contain',
-  });
+    this.visualSourceType = 'user_screenshot',
+    this.visualAssetPaths = const [],
+  })  : sceneTitle = sceneTitle ?? title ?? '',
+        onScreenText = onScreenText ?? captionText ?? title ?? '',
+        voiceOverNarration = voiceOverNarration ?? narrationText ?? '',
+        subtitleText = subtitleText ?? captionText ?? narrationText ?? '';
+
+  // Backward compatibility getters
+  String get title => sceneTitle;
+  String get narrationText => voiceOverNarration;
+  String? get captionText => subtitleText.isNotEmpty ? subtitleText : onScreenText;
 
   VideoSceneModel copyWith({
+    String? id,
     int? sceneNumber,
+    String? sceneTitle,
     String? title,
+    String? onScreenText,
+    String? voiceOverNarration,
     String? narrationText,
+    String? subtitleText,
+    String? captionText,
     String? visualDescription,
+    String? callToAction,
     double? durationSeconds,
     String? imageAssetPath,
     String? videoClipPath,
     double? clipStartTimeSeconds,
     double? clipEndTimeSeconds,
     String? badgeText,
-    String? captionText,
     String? transition,
     String? fitMode,
+    String? visualSourceType,
+    List<String>? visualAssetPaths,
   }) {
     return VideoSceneModel(
+      id: id ?? this.id,
       sceneNumber: sceneNumber ?? this.sceneNumber,
-      title: title ?? this.title,
-      narrationText: narrationText ?? this.narrationText,
+      sceneTitle: sceneTitle ?? title ?? this.sceneTitle,
+      onScreenText: onScreenText ?? captionText ?? this.onScreenText,
+      voiceOverNarration: voiceOverNarration ?? narrationText ?? this.voiceOverNarration,
+      subtitleText: subtitleText ?? captionText ?? this.subtitleText,
       visualDescription: visualDescription ?? this.visualDescription,
+      callToAction: callToAction ?? this.callToAction,
       durationSeconds: durationSeconds ?? this.durationSeconds,
       imageAssetPath: imageAssetPath ?? this.imageAssetPath,
       videoClipPath: videoClipPath ?? this.videoClipPath,
       clipStartTimeSeconds: clipStartTimeSeconds ?? this.clipStartTimeSeconds,
       clipEndTimeSeconds: clipEndTimeSeconds ?? this.clipEndTimeSeconds,
       badgeText: badgeText ?? this.badgeText,
-      captionText: captionText ?? this.captionText,
       transition: transition ?? this.transition,
       fitMode: fitMode ?? this.fitMode,
+      visualSourceType: visualSourceType ?? this.visualSourceType,
+      visualAssetPaths: visualAssetPaths ?? this.visualAssetPaths,
     );
   }
 
   Map<String, dynamic> toMap() {
     return {
+      'id': id,
       'scene_number': sceneNumber,
-      'title': title,
-      'narration_text': narrationText,
+      'scene_title': sceneTitle,
+      'title': sceneTitle, // backward compatibility
+      'on_screen_text': onScreenText,
+      'voice_over_narration': voiceOverNarration,
+      'narration_text': voiceOverNarration, // backward compatibility
+      'subtitle_text': subtitleText,
+      'caption_text': subtitleText, // backward compatibility
       'visual_description': visualDescription,
+      'call_to_action': callToAction,
       'duration_seconds': durationSeconds,
       'image_asset_path': imageAssetPath,
       'video_clip_path': videoClipPath,
       'clip_start_time_seconds': clipStartTimeSeconds,
       'clip_end_time_seconds': clipEndTimeSeconds,
       'badge_text': badgeText,
-      'caption_text': captionText,
       'transition': transition,
       'fit_mode': fitMode,
+      'visual_source_type': visualSourceType,
+      'visual_asset_paths': visualAssetPaths,
     };
   }
 
   factory VideoSceneModel.fromMap(Map<String, dynamic> map) {
+    List<String> parseList(dynamic raw) {
+      if (raw is List) {
+        return raw.map((e) => e.toString()).toList();
+      } else if (raw is String && raw.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw) as List;
+          return decoded.map((e) => e.toString()).toList();
+        } catch (_) {}
+      }
+      return [];
+    }
+
+    final sceneNumber = (map['scene_number'] as num?)?.toInt() ?? 1;
+    final id = map['id'] as String? ?? 'scene_${sceneNumber}_${const Uuid().v4().substring(0, 8)}';
+    final sceneTitle = map['scene_title'] as String? ?? map['title'] as String? ?? '';
+    final onScreenText = map['on_screen_text'] as String? ?? map['caption_text'] as String? ?? sceneTitle;
+    final voiceOverNarration = map['voice_over_narration'] as String? ?? map['narration_text'] as String? ?? '';
+    final subtitleText = map['subtitle_text'] as String? ?? map['caption_text'] as String? ?? voiceOverNarration;
+
     return VideoSceneModel(
-      sceneNumber: (map['scene_number'] as num?)?.toInt() ?? 1,
-      title: map['title'] as String? ?? '',
-      narrationText: map['narration_text'] as String? ?? '',
+      id: id,
+      sceneNumber: sceneNumber,
+      sceneTitle: sceneTitle,
+      onScreenText: onScreenText,
+      voiceOverNarration: voiceOverNarration,
+      subtitleText: subtitleText,
       visualDescription: map['visual_description'] as String? ?? '',
+      callToAction: map['call_to_action'] as String?,
       durationSeconds: (map['duration_seconds'] as num?)?.toDouble() ?? 3.0,
       imageAssetPath: map['image_asset_path'] as String?,
       videoClipPath: map['video_clip_path'] as String?,
       clipStartTimeSeconds: (map['clip_start_time_seconds'] as num?)?.toDouble(),
       clipEndTimeSeconds: (map['clip_end_time_seconds'] as num?)?.toDouble(),
       badgeText: map['badge_text'] as String? ?? '',
-      captionText: map['caption_text'] as String?,
       transition: map['transition'] as String? ?? 'fade',
       fitMode: map['fit_mode'] as String? ?? 'contain',
+      visualSourceType: map['visual_source_type'] as String? ?? 'user_screenshot',
+      visualAssetPaths: parseList(map['visual_asset_paths']),
     );
   }
 }
@@ -111,6 +178,9 @@ class VideoProjectModel {
   final double totalDurationSeconds;
   final List<VideoSceneModel> scenes;
   final String audioNarrationScript;
+  final String originalInputText;
+  final String generatedMarketingScript;
+  final String renderingPhaseStatus; // storyboardReady, visualAssetsReady, framesGenerated, encodingInProgress, videoEncodedSuccessfully, exported, failed
   final String? inputAppUrl;
   final String? inputTextPrompt;
   final List<String> inputMediaPaths;
@@ -136,6 +206,9 @@ class VideoProjectModel {
     required this.totalDurationSeconds,
     required this.scenes,
     required this.audioNarrationScript,
+    this.originalInputText = '',
+    this.generatedMarketingScript = '',
+    this.renderingPhaseStatus = 'storyboardReady',
     this.inputAppUrl,
     this.inputTextPrompt,
     this.inputMediaPaths = const [],
@@ -162,6 +235,9 @@ class VideoProjectModel {
     double? totalDurationSeconds,
     List<VideoSceneModel>? scenes,
     String? audioNarrationScript,
+    String? originalInputText,
+    String? generatedMarketingScript,
+    String? renderingPhaseStatus,
     String? inputAppUrl,
     String? inputTextPrompt,
     List<String>? inputMediaPaths,
@@ -187,6 +263,9 @@ class VideoProjectModel {
       totalDurationSeconds: totalDurationSeconds ?? this.totalDurationSeconds,
       scenes: scenes ?? this.scenes,
       audioNarrationScript: audioNarrationScript ?? this.audioNarrationScript,
+      originalInputText: originalInputText ?? this.originalInputText,
+      generatedMarketingScript: generatedMarketingScript ?? this.generatedMarketingScript,
+      renderingPhaseStatus: renderingPhaseStatus ?? this.renderingPhaseStatus,
       inputAppUrl: inputAppUrl ?? this.inputAppUrl,
       inputTextPrompt: inputTextPrompt ?? this.inputTextPrompt,
       inputMediaPaths: inputMediaPaths ?? this.inputMediaPaths,
@@ -215,6 +294,9 @@ class VideoProjectModel {
       'total_duration_seconds': totalDurationSeconds,
       'scenes': jsonEncode(scenes.map((s) => s.toMap()).toList()),
       'audio_narration_script': audioNarrationScript,
+      'original_input_text': originalInputText,
+      'generated_marketing_script': generatedMarketingScript,
+      'rendering_phase_status': renderingPhaseStatus,
       'input_app_url': inputAppUrl,
       'input_text_prompt': inputTextPrompt,
       'input_media_paths': jsonEncode(inputMediaPaths),
@@ -252,6 +334,12 @@ class VideoProjectModel {
       return [];
     }
 
+    final exportStatus = map['export_status'] as String? ?? 'draft';
+    final phaseStatus = map['rendering_phase_status'] as String? ??
+        (exportStatus == 'rendered'
+            ? 'videoEncodedSuccessfully'
+            : (exportStatus == 'exported' ? 'exported' : 'storyboardReady'));
+
     return VideoProjectModel(
       id: map['id'] as String,
       appId: map['app_id'] as String?,
@@ -263,6 +351,9 @@ class VideoProjectModel {
       totalDurationSeconds: (map['total_duration_seconds'] as num?)?.toDouble() ?? 15.0,
       scenes: parseScenes(map['scenes']),
       audioNarrationScript: map['audio_narration_script'] as String? ?? '',
+      originalInputText: map['original_input_text'] as String? ?? map['input_text_prompt'] as String? ?? '',
+      generatedMarketingScript: map['generated_marketing_script'] as String? ?? map['audio_narration_script'] as String? ?? '',
+      renderingPhaseStatus: phaseStatus,
       inputAppUrl: map['input_app_url'] as String?,
       inputTextPrompt: map['input_text_prompt'] as String?,
       inputMediaPaths: parseMediaPaths(map['input_media_paths']),
@@ -271,7 +362,7 @@ class VideoProjectModel {
       backgroundMusicPath: map['background_music_path'] as String?,
       backgroundMusicVolume: (map['background_music_volume'] as num?)?.toDouble() ?? 0.2,
       enableVoiceNarration: (map['enable_voice_narration'] as int? ?? 0) == 1,
-      exportStatus: map['export_status'] as String? ?? 'draft',
+      exportStatus: exportStatus,
       exportedFilePath: map['exported_file_path'] as String?,
       fileSizeBytes: (map['file_size_bytes'] as num?)?.toInt(),
       createdAt: DateTime.parse(map['created_at'] as String),

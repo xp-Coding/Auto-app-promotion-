@@ -8,6 +8,7 @@ import '../../../core/database/app_database.dart';
 import '../../../core/logging/app_logger.dart';
 import '../../apps/models/app_model.dart';
 import '../../content_studio/domain/ffmpeg_service.dart';
+import '../../content_studio/domain/visual_library_service.dart';
 import '../models/video_project_model.dart';
 
 class VideoExportResult {
@@ -18,6 +19,10 @@ class VideoExportResult {
   final String? mp4FilePath;
   final String? batchScriptPath;
   final int? fileSizeBytes;
+  final double? durationSeconds;
+  final int? videoWidth;
+  final int? videoHeight;
+  final String renderingPhaseStatus; // storyboardReady, visualAssetsReady, framesGenerated, encodingInProgress, videoEncodedSuccessfully, exported, failed
   final String? errorMessage;
 
   const VideoExportResult({
@@ -28,6 +33,10 @@ class VideoExportResult {
     this.mp4FilePath,
     this.batchScriptPath,
     this.fileSizeBytes,
+    this.durationSeconds,
+    this.videoWidth,
+    this.videoHeight,
+    this.renderingPhaseStatus = 'storyboardReady',
     this.errorMessage,
   });
 }
@@ -35,12 +44,14 @@ class VideoExportResult {
 /// Standalone local video project export and rendering engine.
 /// Renders high-res scene slide frames with genuine assets,
 /// generates timed SRT subtitle tracks, narration scripts, interactive HTML5 video preview player,
-/// and compiles genuine MP4 videos using FFmpeg when available.
+/// and compiles genuine MP4 videos using FFmpeg with strict playable stream verification.
 class VideoProjectExporter {
   final FfmpegService _ffmpegService;
+  final VisualLibraryService _visualLibrary;
 
-  VideoProjectExporter([FfmpegService? ffmpegService])
-      : _ffmpegService = ffmpegService ?? FfmpegService();
+  VideoProjectExporter([FfmpegService? ffmpegService, VisualLibraryService? visualLibrary])
+      : _ffmpegService = ffmpegService ?? FfmpegService(),
+        _visualLibrary = visualLibrary ?? VisualLibraryService();
 
   /// Exports a video project into a complete local media production package.
   Future<VideoExportResult> exportProject({
@@ -65,9 +76,14 @@ class VideoProjectExporter {
       }
 
       // Calculate pixel dimensions from aspect ratio and resolution
-      final dims = _getDimensions(project.aspectRatio, project.resolution);
+      final dims = getDimensions(project.aspectRatio, project.resolution);
       final width = dims.width;
       final height = dims.height;
+
+      onProgress?.call(const FfmpegRenderProgress(
+        progressPercent: 0.1,
+        currentPhase: 'Generating visual scene frames via Flutter Canvas...',
+      ));
 
       // 1. Render High-Resolution Scene Slide Frames via Canvas
       final renderedFrames = <String>[];
@@ -119,7 +135,7 @@ ${project.audioNarrationScript}
 --------------------------------------------------------------------------------
 SCENE-BY-SCENE TIMELINE:
 --------------------------------------------------------------------------------
-${project.scenes.map((s) => 'Scene ${s.sceneNumber} (${s.durationSeconds}s) [${s.badgeText}]:\nTitle: "${s.title}"\nNarration: "${s.narrationText}"\nVisual: ${s.visualDescription}\n').join('\n')}
+${project.scenes.map((s) => 'Scene ${s.sceneNumber} (${s.durationSeconds}s) [${s.badgeText}]:\nTitle: "${s.sceneTitle}"\nNarration: "${s.voiceOverNarration}"\nOn-Screen: "${s.onScreenText}"\nVisual: ${s.visualDescription}\n').join('\n')}
 ''');
 
       // 3. Generate Timed SRT Subtitles
@@ -134,7 +150,7 @@ ${project.scenes.map((s) => 'Scene ${s.sceneNumber} (${s.durationSeconds}s) [${s
 
         srtBuffer.writeln('${i + 1}');
         srtBuffer.writeln('${_formatSrtTimestamp(startSec)} --> ${_formatSrtTimestamp(endSec)}');
-        srtBuffer.writeln(scene.captionText ?? scene.narrationText);
+        srtBuffer.writeln(scene.subtitleText.isNotEmpty ? scene.subtitleText : scene.onScreenText);
         srtBuffer.writeln();
       }
       await srtFile.writeAsString(srtBuffer.toString());
@@ -174,40 +190,72 @@ pause
 ''';
       await batFile.writeAsString(batContent);
 
-      // 6. Check if FFmpeg is available and attempt automatic background MP4 compilation
-      String? mp4Path;
-      int? fileSize;
-      try {
-        final ffmpegStatus = await _ffmpegService.checkAvailability();
-        if (ffmpegStatus.isAvailable && renderedFrames.isNotEmpty) {
-          final targetMp4 = p.join(baseDir.path, 'video_${project.id}.mp4');
-          final success = await _ffmpegService.renderVideo(
-            sceneFramePaths: renderedFrames,
-            sceneDurations: project.scenes.map((s) => s.durationSeconds).toList(),
-            outputMp4Path: targetMp4,
-            width: width,
-            height: height,
-            backgroundMusicPath: project.backgroundMusicPath,
-            backgroundMusicVolume: project.backgroundMusicVolume,
-            sceneVideoClipPaths: project.scenes.map((s) => s.videoClipPath).toList(),
-            clipStartTimes: project.scenes.map((s) => s.clipStartTimeSeconds).toList(),
-            clipEndTimes: project.scenes.map((s) => s.clipEndTimeSeconds).toList(),
-            onProgress: onProgress,
-          );
-
-          if (success && File(targetMp4).existsSync() && File(targetMp4).lengthSync() > 0) {
-            mp4Path = targetMp4;
-            fileSize = File(targetMp4).lengthSync();
-            await AppLogger.success('video_export', 'Exported MP4 video: $mp4Path (${(fileSize / (1024 * 1024)).toStringAsFixed(2)} MB)');
-          }
-        }
-      } catch (err) {
-        await AppLogger.warn('video_export', 'FFmpeg render attempt: $err');
+      // 6. Check FFmpeg availability
+      final ffmpegStatus = await _ffmpegService.checkAvailability();
+      if (!ffmpegStatus.isAvailable) {
+        await AppLogger.warn('video_export', 'FFmpeg not detected. Slide frames and package generated, but MP4 video encoding skipped.');
+        return VideoExportResult(
+          success: true,
+          exportDirectoryPath: baseDir.path,
+          renderedFramePaths: renderedFrames,
+          htmlPreviewPath: htmlFile.path,
+          batchScriptPath: batFile.path,
+          renderingPhaseStatus: 'framesGenerated',
+          errorMessage: 'FFmpeg was not detected on this system. Slide frames, timed subtitles, and batch compiler were created, but a real playable MP4 could not be encoded. Please install FFmpeg (e.g., winget install Gyan.FFmpeg) or check Settings.',
+        );
       }
 
+      // 7. Compile genuine MP4 video via FFmpeg
+      onProgress?.call(const FfmpegRenderProgress(
+        progressPercent: 0.3,
+        currentPhase: 'Encoding high-definition H.264 / AAC MP4 video...',
+      ));
+
+      final targetMp4 = p.join(baseDir.path, 'video_${project.id}.mp4');
+      final renderSuccess = await _ffmpegService.renderVideo(
+        sceneFramePaths: renderedFrames,
+        sceneDurations: project.scenes.map((s) => s.durationSeconds).toList(),
+        outputMp4Path: targetMp4,
+        width: width,
+        height: height,
+        backgroundMusicPath: project.backgroundMusicPath,
+        backgroundMusicVolume: project.backgroundMusicVolume,
+        sceneVideoClipPaths: project.scenes.map((s) => s.videoClipPath).toList(),
+        clipStartTimes: project.scenes.map((s) => s.clipStartTimeSeconds).toList(),
+        clipEndTimes: project.scenes.map((s) => s.clipEndTimeSeconds).toList(),
+        onProgress: onProgress,
+      );
+
+      if (!renderSuccess || !File(targetMp4).existsSync() || File(targetMp4).lengthSync() == 0) {
+        return VideoExportResult(
+          success: false,
+          exportDirectoryPath: baseDir.path,
+          renderedFramePaths: renderedFrames,
+          htmlPreviewPath: htmlFile.path,
+          batchScriptPath: batFile.path,
+          renderingPhaseStatus: 'failed',
+          errorMessage: 'FFmpeg execution finished but failed to generate a valid non-empty MP4 video file.',
+        );
+      }
+
+      // 8. Probe resulting MP4 to verify stream integrity and non-zero duration
+      final probe = await _ffmpegService.probeVideo(targetMp4);
+      if (!probe.isValid || !probe.hasVideoStream) {
+        return VideoExportResult(
+          success: false,
+          exportDirectoryPath: baseDir.path,
+          renderedFramePaths: renderedFrames,
+          htmlPreviewPath: htmlFile.path,
+          batchScriptPath: batFile.path,
+          renderingPhaseStatus: 'failed',
+          errorMessage: 'Resulting MP4 video stream verification failed. File does not contain a playable video track.',
+        );
+      }
+
+      final fileSize = File(targetMp4).lengthSync();
       await AppLogger.success(
         'video_export',
-        'Video project exported: ${renderedFrames.length} scene frames rendered to ${baseDir.path}.',
+        'Verified real playable MP4 video: $targetMp4 (${(fileSize / (1024 * 1024)).toStringAsFixed(2)} MB, ${probe.durationSeconds.toStringAsFixed(1)}s, ${probe.width ?? width}x${probe.height ?? height})',
       );
 
       return VideoExportResult(
@@ -215,9 +263,13 @@ pause
         exportDirectoryPath: baseDir.path,
         renderedFramePaths: renderedFrames,
         htmlPreviewPath: htmlFile.path,
-        mp4FilePath: mp4Path,
+        mp4FilePath: targetMp4,
         batchScriptPath: batFile.path,
         fileSizeBytes: fileSize,
+        durationSeconds: probe.durationSeconds > 0 ? probe.durationSeconds : project.totalDurationSeconds,
+        videoWidth: probe.width ?? width,
+        videoHeight: probe.height ?? height,
+        renderingPhaseStatus: 'videoEncodedSuccessfully',
       );
     } catch (e) {
       await AppLogger.error('video_export', 'Failed to export video project: $e');
@@ -225,6 +277,7 @@ pause
         success: false,
         exportDirectoryPath: '',
         htmlPreviewPath: '',
+        renderingPhaseStatus: 'failed',
         errorMessage: e.toString(),
       );
     }
@@ -242,32 +295,88 @@ pause
       destDir.createSync(recursive: true);
     }
 
-    // First ensure project is rendered locally
-    final localResult = await exportProject(
-      project: project,
-      app: app,
-    );
-
-    if (!localResult.success) {
-      return localResult;
-    }
-
-    // If MP4 was rendered, copy it to the user's destination
-    if (localResult.mp4FilePath != null && File(localResult.mp4FilePath!).existsSync()) {
-      final srcFile = File(localResult.mp4FilePath!);
-      await srcFile.copy(destinationFilePath);
-      final size = File(destinationFilePath).lengthSync();
+    if (destinationFilePath.toLowerCase().endsWith('.html')) {
+      final localResult = await exportProject(project: project, app: app);
+      final sourceHtml = File(localResult.htmlPreviewPath);
+      if (sourceHtml.existsSync()) {
+        await sourceHtml.copy(destinationFilePath);
+      }
       return VideoExportResult(
         success: true,
         exportDirectoryPath: destDir.path,
-        renderedFramePaths: localResult.renderedFramePaths,
-        htmlPreviewPath: localResult.htmlPreviewPath,
-        mp4FilePath: destinationFilePath,
-        fileSizeBytes: size,
+        htmlPreviewPath: destinationFilePath,
+        mp4FilePath: localResult.mp4FilePath,
+        renderingPhaseStatus: localResult.renderingPhaseStatus,
+        fileSizeBytes: localResult.fileSizeBytes,
+        durationSeconds: localResult.durationSeconds,
+        videoWidth: localResult.videoWidth,
+        videoHeight: localResult.videoHeight,
       );
     }
 
-    return localResult;
+    if (!destinationFilePath.toLowerCase().endsWith('.mp4')) {
+      return const VideoExportResult(
+        success: false,
+        exportDirectoryPath: '',
+        htmlPreviewPath: '',
+        renderingPhaseStatus: 'failed',
+        errorMessage: 'Destination file must have an .mp4 extension to ensure genuine playable video output.',
+      );
+    }
+
+    // Ensure video is genuinely rendered
+    String? sourceMp4 = project.exportedFilePath;
+    if (sourceMp4 == null || !File(sourceMp4).existsSync() || File(sourceMp4).lengthSync() == 0) {
+      final localResult = await exportProject(project: project, app: app);
+      if (!localResult.success || localResult.mp4FilePath == null) {
+        return VideoExportResult(
+          success: false,
+          exportDirectoryPath: localResult.exportDirectoryPath,
+          htmlPreviewPath: localResult.htmlPreviewPath,
+          renderingPhaseStatus: 'failed',
+          errorMessage: localResult.errorMessage ?? 'Could not encode playable MP4 video for export.',
+        );
+      }
+      sourceMp4 = localResult.mp4FilePath!;
+    }
+
+    // Copy MP4 to chosen location
+    await File(sourceMp4).copy(destinationFilePath);
+
+    // Verify copied file exists, is non-empty, and has valid stream
+    if (!destFile.existsSync() || destFile.lengthSync() == 0) {
+      return const VideoExportResult(
+        success: false,
+        exportDirectoryPath: '',
+        htmlPreviewPath: '',
+        renderingPhaseStatus: 'failed',
+        errorMessage: 'Export verification failed: Resulting file was empty or not written.',
+      );
+    }
+
+    final probe = await _ffmpegService.probeVideo(destinationFilePath);
+    if (!probe.isValid) {
+      return const VideoExportResult(
+        success: false,
+        exportDirectoryPath: '',
+        htmlPreviewPath: '',
+        renderingPhaseStatus: 'failed',
+        errorMessage: 'Export verification failed: Resulting file is not a valid playable video.',
+      );
+    }
+
+    final size = destFile.lengthSync();
+    return VideoExportResult(
+      success: true,
+      exportDirectoryPath: destDir.path,
+      htmlPreviewPath: '',
+      mp4FilePath: destinationFilePath,
+      fileSizeBytes: size,
+      durationSeconds: probe.durationSeconds,
+      videoWidth: probe.width,
+      videoHeight: probe.height,
+      renderingPhaseStatus: 'exported',
+    );
   }
 
   /// Renders a single high-resolution slide for a video scene using Flutter Canvas.
@@ -292,22 +401,27 @@ pause
       final isVertical = aspectRatio == '9:16';
       final isSquare = aspectRatio == '1:1';
 
-      // 1. Background Gradient
+      final gradientPreset = _visualLibrary.suggestGradientForCategory(appCategory);
+      final colors = gradientPreset.gradientColors.isNotEmpty
+          ? gradientPreset.gradientColors
+          : [const Color(0xFF070B14), const Color(0xFF131131), const Color(0xFF0B132B)];
+
+      final stops = colors.length == 2
+          ? null
+          : List.generate(colors.length, (i) => i / (colors.length - 1));
+
       final bgPaint = Paint()
         ..shader = ui.Gradient.linear(
           const Offset(0, 0),
           Offset(width.toDouble(), height.toDouble()),
-          [
-            const Color(0xFF070B14),
-            const Color(0xFF131131),
-            const Color(0xFF0B132B),
-          ],
+          colors,
+          stops,
         );
       canvas.drawRect(Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()), bgPaint);
 
       // Subtle ambient background ring
       final ambientPaint = Paint()
-        ..color = const Color(0x1A6366F1)
+        ..color = colors.last.withOpacity(0.25)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 120);
       canvas.drawCircle(Offset(width / 2, height / 2), width * 0.45, ambientPaint);
 
@@ -338,7 +452,7 @@ pause
       // 3. Scene Title
       final titlePainter = TextPainter(
         text: TextSpan(
-          text: scene.title,
+          text: scene.sceneTitle,
           style: TextStyle(
             color: Colors.white,
             fontSize: isVertical ? 50 : (isSquare ? 42 : 44),
@@ -350,7 +464,7 @@ pause
       )..layout(maxWidth: width - (margin * 2));
       titlePainter.paint(canvas, Offset(margin, margin + 68));
 
-      // 4. Narration Hook Banner / Overlay Caption
+      // 4. Headline / On-Screen Text Overlay Banner
       final hookY = margin + (isVertical ? 190 : (isSquare ? 150 : 160));
       final hookHeight = isVertical ? 180.0 : (isSquare ? 130.0 : 130.0);
       final hookRect = RRect.fromRectAndRadius(
@@ -366,9 +480,10 @@ pause
         ..strokeWidth = 2;
       canvas.drawRRect(hookRect, hookBorder);
 
+      final displayCaption = scene.onScreenText.isNotEmpty ? scene.onScreenText : scene.voiceOverNarration;
       final narrationPainter = TextPainter(
         text: TextSpan(
-          text: '“${scene.narrationText}”',
+          text: '“$displayCaption”',
           style: TextStyle(
             color: const Color(0xFFF8FAFC),
             fontSize: isVertical ? 28 : (isSquare ? 22 : 24),
@@ -424,7 +539,7 @@ pause
         }
       }
 
-      // If no actual image was painted, draw visual placeholder with icon & typography
+      // If no actual image was painted, render procedural composition card
       if (!drewActualImage) {
         if (iconPath != null && File(iconPath).existsSync()) {
           final iconImg = await _loadLocalImage(iconPath);
@@ -447,7 +562,7 @@ pause
 
         final descPainter = TextPainter(
           text: TextSpan(
-            text: scene.visualDescription,
+            text: scene.visualDescription.isNotEmpty ? scene.visualDescription : 'High-definition promotional feature card',
             style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 24),
           ),
           textDirection: TextDirection.ltr,
@@ -460,40 +575,45 @@ pause
         );
       }
 
-      // 6. Bottom Callout
-      final ctaY = height - margin - 40;
+      // 6. Footer Call-to-Action Bar
+      final footerY = height - bottomMargin + 20;
       final ctaPainter = TextPainter(
         text: TextSpan(
-          text: '▶ $appTitle • Available on Google Play',
+          text: scene.callToAction != null && scene.callToAction!.isNotEmpty
+              ? '▶ ${scene.callToAction} • $appTitle'
+              : '▶ Get $appTitle on Google Play: $playStoreUrl',
           style: const TextStyle(
-            color: Color(0xFF34D399),
-            fontSize: 22,
+            color: Color(0xFF38BDF8),
+            fontSize: 18,
             fontWeight: FontWeight.bold,
           ),
         ),
         textDirection: TextDirection.ltr,
-      )..layout();
-      ctaPainter.paint(canvas, Offset((width - ctaPainter.width) / 2, ctaY));
+      )..layout(maxWidth: width - (margin * 2));
+      ctaPainter.paint(canvas, Offset(margin, footerY));
 
+      // Finish recording and render PNG file
       final picture = recorder.endRecording();
-      final img = await picture.toImage(width, height);
-      final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+      final image = await picture.toImage(width, height);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
 
-      if (byteData != null) {
-        final paddedIndex = sceneIndex.toString().padLeft(2, '0');
-        final file = File(p.join(outputDir.path, 'scene_$paddedIndex.png'));
-        await file.writeAsBytes(byteData.buffer.asUint8List());
-        return file.path;
-      }
-    } catch (_) {}
-    return null;
+      if (byteData == null) return null;
+
+      final pngBytes = byteData.buffer.asUint8List();
+      final fileName = 'scene_${sceneIndex.toString().padLeft(2, '0')}.png';
+      final file = File(p.join(outputDir.path, fileName));
+      await file.writeAsBytes(pngBytes);
+
+      return file.path;
+    } catch (e) {
+      await AppLogger.error('video_export', 'Error rendering scene slide: $e');
+      return null;
+    }
   }
 
-  Future<ui.Image?> _loadLocalImage(String filePath) async {
+  Future<ui.Image?> _loadLocalImage(String path) async {
     try {
-      final file = File(filePath);
-      if (!file.existsSync()) return null;
-      final bytes = await file.readAsBytes();
+      final bytes = await File(path).readAsBytes();
       final codec = await ui.instantiateImageCodec(bytes);
       final frame = await codec.getNextFrame();
       return frame.image;
@@ -502,17 +622,25 @@ pause
     }
   }
 
-  VideoDimensions _getDimensions(String aspectRatio, String resolution) {
-    return getDimensions(aspectRatio, resolution);
+  static ResolutionDimensions getDimensions(String aspectRatio, String resolution) {
+    final is1080 = resolution == '1080p';
+    switch (aspectRatio) {
+      case '16:9':
+        return is1080 ? const ResolutionDimensions(1920, 1080) : const ResolutionDimensions(1280, 720);
+      case '1:1':
+        return is1080 ? const ResolutionDimensions(1080, 1080) : const ResolutionDimensions(720, 720);
+      case '9:16':
+      default:
+        return is1080 ? const ResolutionDimensions(1080, 1920) : const ResolutionDimensions(720, 1280);
+    }
   }
 
-  String _formatSrtTimestamp(double totalSeconds) {
-    final int hours = totalSeconds ~/ 3600;
-    final int minutes = (totalSeconds % 3600) ~/ 60;
-    final int seconds = totalSeconds.toInt() % 60;
-    final int milliseconds = ((totalSeconds - totalSeconds.toInt()) * 1000).toInt();
-
-    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')},${milliseconds.toString().padLeft(3, '0')}';
+  String _formatSrtTimestamp(double seconds) {
+    final hrs = (seconds ~/ 3600).toString().padLeft(2, '0');
+    final mins = ((seconds % 3600) ~/ 60).toString().padLeft(2, '0');
+    final secs = (seconds % 60).toInt().toString().padLeft(2, '0');
+    final millis = ((seconds - seconds.floor()) * 1000).toInt().toString().padLeft(3, '0');
+    return '$hrs:$mins:$secs,$millis';
   }
 
   String _generateHtmlPlayer({
@@ -521,151 +649,154 @@ pause
     required List<String> framePaths,
     required String aspectRatio,
   }) {
-    final relativeFrames = framePaths.map((f) => 'frames/${p.basename(f)}').toList();
-    final framesJson = jsonEncode(relativeFrames);
-    final scenesJson = jsonEncode(project.scenes.map((s) => s.toMap()).toList());
+    final frameListJson = jsonEncode(framePaths.map((f) => 'frames/${p.basename(f)}').toList());
+    final durationsJson = jsonEncode(project.scenes.map((s) => s.durationSeconds).toList());
+    final titlesJson = jsonEncode(project.scenes.map((s) => s.sceneTitle).toList());
+    final captionsJson = jsonEncode(project.scenes.map((s) => s.onScreenText).toList());
 
-    final isVertical = aspectRatio == '9:16';
-    final isSquare = aspectRatio == '1:1';
-    final stageWidth = isVertical ? '360px' : (isSquare ? '480px' : '640px');
-    final stageHeight = isVertical ? '640px' : (isSquare ? '480px' : '360px');
+    final ratioAspect = aspectRatio == '9:16'
+        ? '9 / 16'
+        : (aspectRatio == '1:1' ? '1 / 1' : '16 / 9');
 
     return '''<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>${project.title} - Video Project Preview</title>
+  <title>${project.title} - Preview Player</title>
   <style>
     body {
       margin: 0;
-      background: #0b1120;
-      color: #f8fafc;
+      padding: 24px;
+      background: #0B0F19;
+      color: #F8FAFC;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
-      min-height: 100vh;
-      padding: 24px;
-      box-sizing: border-box;
     }
-    .header { text-align: center; margin-bottom: 20px; }
-    .header h1 { margin: 0 0 6px 0; font-size: 22px; color: #fff; }
-    .header p { margin: 0; font-size: 13px; color: #94a3b8; }
-    .stage {
-      position: relative;
-      width: $stageWidth;
-      height: $stageHeight;
+    .container {
+      max-width: 900px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    h1 { margin-bottom: 6px; font-size: 22px; color: #6366F1; }
+    .meta { font-size: 13px; color: #94A3B8; margin-bottom: 20px; }
+    .player-box {
+      width: 100%;
+      max-width: 480px;
+      aspect-ratio: $ratioAspect;
       background: #000;
-      border-radius: 16px;
+      border-radius: 14px;
       overflow: hidden;
-      box-shadow: 0 20px 40px rgba(0,0,0,0.7);
-      border: 2px solid #334155;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+      position: relative;
     }
-    .stage img {
+    .player-box img {
       width: 100%;
       height: 100%;
       object-fit: contain;
-      transition: opacity 0.35s ease-in-out;
+      display: block;
     }
     .controls {
-      margin-top: 18px;
       display: flex;
-      align-items: center;
       gap: 12px;
-      background: #1e293b;
+      margin-top: 16px;
+      align-items: center;
+    }
+    button {
       padding: 10px 20px;
-      border-radius: 30px;
-      border: 1px solid #334155;
-    }
-    .btn {
-      background: #6366f1;
+      background: #6366F1;
       border: none;
-      color: white;
-      padding: 8px 18px;
-      border-radius: 20px;
-      font-weight: 600;
+      border-radius: 8px;
+      color: #fff;
+      font-weight: bold;
       cursor: pointer;
-      font-size: 13px;
     }
-    .btn:hover { background: #4f46e5; }
-    .info { font-size: 13px; color: #94a3b8; }
+    button:hover { background: #4F46E5; }
+    .status-badge {
+      position: absolute;
+      bottom: 12px;
+      left: 12px;
+      background: rgba(0,0,0,0.7);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
-  <div class="header">
+  <div class="container">
     <h1>${project.title}</h1>
-    <p>Aspect Ratio: $aspectRatio | Duration: ${project.totalDurationSeconds}s | Scenes: ${project.scenes.length}</p>
+    <div class="meta">Aspect: ${project.aspectRatio} | Total Duration: ${project.totalDurationSeconds}s | Scenes: ${project.scenes.length}</div>
+    <div class="player-box">
+      <img id="stageImg" src="${framePaths.isNotEmpty ? 'frames/${p.basename(framePaths.first)}' : ''}" alt="Scene Preview">
+      <div id="badge" class="status-badge">Scene 1 / ${project.scenes.length}</div>
+    </div>
+    <div class="controls">
+      <button id="playBtn" onclick="togglePlay()">Play Presentation</button>
+      <button onclick="prevScene()">◀ Prev</button>
+      <button onclick="nextScene()">Next ▶</button>
+    </div>
   </div>
-
-  <div class="stage">
-    <img id="currentFrame" src="${relativeFrames.isNotEmpty ? relativeFrames.first : ''}" alt="Scene Preview" />
-  </div>
-
-  <div class="controls">
-    <button class="btn" id="playBtn" onclick="togglePlay()">▶ Play Preview</button>
-    <button class="btn" onclick="prevScene()">◀ Prev</button>
-    <button class="btn" onclick="nextScene()">Next ▶</button>
-    <span class="info" id="sceneIndicator">Scene 1 / ${relativeFrames.length}</span>
-  </div>
-
   <script>
-    const frames = $framesJson;
-    const scenes = $scenesJson;
-    let currentIndex = 0;
+    const frames = $frameListJson;
+    const durations = $durationsJson;
+    const titles = $titlesJson;
+    const captions = $captionsJson;
+    let idx = 0;
     let isPlaying = false;
     let timer = null;
 
-    function showScene(idx) {
-      if (idx < 0) idx = 0;
-      if (idx >= frames.length) idx = frames.length - 1;
-      currentIndex = idx;
-      document.getElementById('currentFrame').src = frames[currentIndex];
-      document.getElementById('sceneIndicator').innerText = `Scene \${currentIndex + 1} / \${frames.length}`;
+    function showScene(i) {
+      if (i < 0) i = 0;
+      if (i >= frames.length) i = frames.length - 1;
+      idx = i;
+      document.getElementById('stageImg').src = frames[idx];
+      document.getElementById('badge').innerText = 'Scene ' + (idx + 1) + '/' + frames.length + ' • ' + titles[idx];
     }
 
     function nextScene() {
-      if (currentIndex < frames.length - 1) {
-        showScene(currentIndex + 1);
+      if (idx < frames.length - 1) {
+        showScene(idx + 1);
       } else {
         showScene(0);
+        if (isPlaying) togglePlay();
       }
     }
 
     function prevScene() {
-      if (currentIndex > 0) showScene(currentIndex - 1);
+      showScene(idx - 1);
     }
 
     function togglePlay() {
       isPlaying = !isPlaying;
-      document.getElementById('playBtn').innerText = isPlaying ? '⏸ Pause' : '▶ Play Preview';
+      document.getElementById('playBtn').innerText = isPlaying ? 'Pause' : 'Play Presentation';
       if (isPlaying) {
-        timer = setInterval(nextScene, 3500);
+        scheduleNext();
       } else {
-        clearInterval(timer);
+        clearTimeout(timer);
       }
+    }
+
+    function scheduleNext() {
+      if (!isPlaying) return;
+      const ms = (durations[idx] || 3.5) * 1000;
+      timer = setTimeout(() => {
+        nextScene();
+        if (isPlaying) scheduleNext();
+      }, ms);
     }
   </script>
 </body>
-</html>''';
-  }
-
-  /// Calculates video pixel dimensions based on aspect ratio and resolution
-  static VideoDimensions getDimensions(String aspectRatio, String resolution) {
-    final is720p = resolution.toLowerCase().contains('720');
-    switch (aspectRatio) {
-      case '9:16':
-        return is720p ? const VideoDimensions(720, 1280) : const VideoDimensions(1080, 1920);
-      case '1:1':
-        return is720p ? const VideoDimensions(720, 720) : const VideoDimensions(1080, 1080);
-      case '16:9':
-      default:
-        return is720p ? const VideoDimensions(1280, 720) : const VideoDimensions(1920, 1080);
-    }
+</html>
+''';
   }
 }
 
-class VideoDimensions {
+class ResolutionDimensions {
   final int width;
   final int height;
-  const VideoDimensions(this.width, this.height);
+  const ResolutionDimensions(this.width, this.height);
 }

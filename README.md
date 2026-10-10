@@ -53,12 +53,33 @@ Located under **Content Studio -> Video Template Studio**, this studio allows us
 * **Square 1:1:** Social Feeds (1080x1080 or 720x720).
 * **Anti-Distortion Guarantee:** Media is letterboxed with ambient dark framing (`contain` mode); never stretched or squished.
 
-#### 💾 Local Windows Export & FFmpeg Engine
-* **Native Windows Save File Dialog:** Direct "Export Video to Computer" button opens Windows `SaveFileDialog` to select custom destination folder and filename.
-* **Configurable Default Export Folder:** Set your preferred default folder in **Settings** (defaults to `Videos/AppGrowthStudio`) with instant "Open in Explorer" access.
-* **FFmpeg Acceleration:** Detects FFmpeg from Windows PATH, custom setting paths, WinGet, or Chocolatey. Provides an instant setup command (`winget install Gyan.FFmpeg`) when missing.
-* **Zero Dependency Fallback:** If FFmpeg is not installed, the application automatically produces a complete production package: high-res Canvas slide frames, timed RFC-compliant SRT subtitles, voiceover scripts, an interactive offline HTML5 video player, and a one-click `.bat` encoder script.
-* **100% Offline & Account-Independent:** Export functions entirely on your computer without requiring social accounts, API keys, or internet connectivity.
+#### 💾 Genuine MP4 Video Rendering & Native Windows Export (`FfmpegService`, `VideoProjectExporter`)
+* **Real Playable MP4 Video Compilation:** Compiles high-res Canvas slide frames, video clips, voiceover narration audio, background music, and timing into actual H.264/AAC MP4 files.
+* **Stream & Duration Verification:** Uses `FfmpegService.probeVideo()` to strictly verify that exported files contain valid video streams, non-zero duration, exact dimensions, and non-empty sizes before marking rendering as successful.
+* **Precise Rendering Statuses:** Distinct tracking states (`storyboardReady`, `visualAssetsReady`, `framesGenerated`, `encodingInProgress`, `videoEncodedSuccessfully`, `exported`, `failed`).
+* **Native Windows Save File Dialog:** Direct "Export Video to Computer" button opens a native Windows `SaveFileDialog` for user-selected destination paths and filenames (`.mp4`).
+* **Instant Media Actions:** Verified output card provides direct "Play Video in Default Player" and "Open Export Folder" actions.
+* **FFmpeg Auto-Detection:** Automatically discovers FFmpeg from the bundled path, system PATH, custom settings, WinGet, or Chocolatey.
+* **100% Offline & Account-Independent:** Export functions entirely on your computer without requiring external accounts or internet access.
+
+#### 📝 Storyboard & Voice-Over Text Preservation (Part B)
+* **Independent Text Fields:** Each scene stores completely independent values for Scene Title, On-screen Text, Voice-Over Narration, Subtitle Text, Visual Description, and Call-to-Action.
+* **Immutable User Input:** Original text prompts are preserved in `originalInputText` and never silently rewritten, summarized, or truncated.
+* **Stable Scene Identity & State:** Scene items have unique IDs (`id`). Flutter TextEditingControllers are persistent and keyed by `${scene.id}_$field` with `ValueKey(scene.id)` so that reordering scenes or switching tabs never causes text jumping or data loss.
+* **Granular Regeneration Menu:** Per-scene popup menu provides discrete actions:
+  * *Regenerate Visual Only* (leaves all text intact)
+  * *Regenerate Narration Only* (leaves on-screen text and visuals intact)
+  * *Regenerate Captions Only* (leaves narration and visuals intact)
+  * *Regenerate Scene* (regenerates only the selected scene)
+  * *Regenerate Storyboard* (requires explicit confirmation to protect user edits)
+* **Asynchronous Version Guards:** Stale AI generation responses are ignored if the user has edited scenes in the interim.
+
+#### 🎨 Visual Sources & Built-in Procedural Library (Part C)
+* **Visual Sources Configuration Panel:** Direct access in Video Template Studio to toggle and mix App URLs, Screenshots, Clips, Text, and the Built-in Visual Library.
+* **Curated Procedural Palettes:** 8 modern gradient palettes (Midnight Indigo, Cyber Neon, Sunset Coral, Emerald Luxe, Royal Purple, Titanium Dark, Deep Ocean, Solar Amber).
+* **Geometric Patterns & Motion Backdrops:** Procedural Dot Grid, Cyber Grid, Wave Flow, and Isometric Blueprint backdrops rendered directly on Canvas.
+* **App Domain Vector Iconography:** 9 specialized vector icons (Productivity, Gaming, Finance, Health, Social, Education, Entertainment, Tools, Shopping).
+* **Contextual Suggestion Engine:** Suggests optimal palettes, patterns, and icons based on app category and script semantics without fabricating fake app screenshots.
 
 ### 4. AI & Cost Requirements: Zero Mandatory Subscriptions
 * **100% Free Local Template Engine (Default):** Runs completely offline without API keys or recurring costs.
@@ -132,7 +153,7 @@ flutter pub get
 # 2. Run static analysis (verifies 0 errors & 0 warnings)
 flutter analyze
 
-# 3. Run automated test suite (49 passing tests)
+# 3. Run automated test suite (67 passing tests)
 flutter test
 
 # 4. Launch desktop application

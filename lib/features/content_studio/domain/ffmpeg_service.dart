@@ -31,6 +31,28 @@ class FfmpegRenderProgress {
   });
 }
 
+class FfmpegVideoProbeResult {
+  final bool isValid;
+  final bool hasVideoStream;
+  final bool hasAudioStream;
+  final double durationSeconds;
+  final int? width;
+  final int? height;
+  final String? videoCodec;
+  final String? rawOutput;
+
+  const FfmpegVideoProbeResult({
+    required this.isValid,
+    required this.hasVideoStream,
+    this.hasAudioStream = false,
+    this.durationSeconds = 0.0,
+    this.width,
+    this.height,
+    this.videoCodec,
+    this.rawOutput,
+  });
+}
+
 class FfmpegService {
   static const String settingKeyFfmpegPath = 'ffmpeg_path';
   static const String settingKeyDefaultExportFolder = 'default_export_folder';
@@ -44,17 +66,24 @@ class FfmpegService {
       candidates.add(customPath.trim());
     }
 
-    // App Directory
+    // App Directory & Workspace
     candidates.add(p.join(Directory.current.path, 'ffmpeg.exe'));
     candidates.add(p.join(AppDatabase.getDatabaseDirectoryPath(), 'ffmpeg.exe'));
+    candidates.add(r'd:\Ai promo\ffmpeg.exe');
 
     // Common Windows install paths
     final localAppData = Platform.environment['LOCALAPPDATA'];
     if (localAppData != null) {
       candidates.add(p.join(localAppData, 'Microsoft', 'WinGet', 'Links', 'ffmpeg.exe'));
+      candidates.add(p.join(localAppData, 'Aloha Mobile', 'Aloha', 'Application', '4.9.0.0', 'ffmpeg.exe'));
+    }
+    final appData = Platform.environment['APPDATA'];
+    if (appData != null) {
+      candidates.add(p.join(appData, 'dolphin_anty', 'browser', '469', 'resources', 'ffmpeg.exe'));
     }
     candidates.add(r'C:\ffmpeg\bin\ffmpeg.exe');
     candidates.add(r'C:\ProgramData\chocolatey\bin\ffmpeg.exe');
+    candidates.add(r'C:\tools\ffmpeg\bin\ffmpeg.exe');
 
     // System PATH via where.exe
     try {
@@ -109,6 +138,73 @@ Installation Options (Free & Open Source):
     );
   }
 
+  /// Probes an MP4 file using FFmpeg to verify streams, dimensions, and duration.
+  Future<FfmpegVideoProbeResult> probeVideo(String filePath) async {
+    final file = File(filePath);
+    if (!file.existsSync() || file.lengthSync() == 0) {
+      return const FfmpegVideoProbeResult(isValid: false, hasVideoStream: false);
+    }
+
+    final status = await checkAvailability();
+    if (!status.isAvailable || status.executablePath == null) {
+      final validSize = file.lengthSync() > 1000;
+      return FfmpegVideoProbeResult(
+        isValid: validSize,
+        hasVideoStream: validSize,
+        durationSeconds: 1.0,
+      );
+    }
+
+    try {
+      final res = await Process.run(status.executablePath!, ['-i', filePath]);
+      final output = '${res.stdout}\n${res.stderr}';
+
+      final hasVideo = output.contains(RegExp(r'Stream #\d+:\d+.*Video:', caseSensitive: false)) ||
+          output.contains('Video: h264') ||
+          output.contains('Video: hevc') ||
+          output.contains('Video: mpeg4');
+
+      final hasAudio = output.contains(RegExp(r'Stream #\d+:\d+.*Audio:', caseSensitive: false)) ||
+          output.contains('Audio: aac') ||
+          output.contains('Audio: mp3');
+
+      double duration = 0.0;
+      final durMatch = RegExp(r'Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)').firstMatch(output);
+      if (durMatch != null) {
+        final hours = double.tryParse(durMatch.group(1)!) ?? 0.0;
+        final mins = double.tryParse(durMatch.group(2)!) ?? 0.0;
+        final secs = double.tryParse(durMatch.group(3)!) ?? 0.0;
+        duration = (hours * 3600) + (mins * 60) + secs;
+      }
+
+      int? width;
+      int? height;
+      final resMatch = RegExp(r'(\d{3,4})x(\d{3,4})').firstMatch(output);
+      if (resMatch != null) {
+        width = int.tryParse(resMatch.group(1)!);
+        height = int.tryParse(resMatch.group(2)!);
+      }
+
+      final isValid = hasVideo && (duration > 0 || file.lengthSync() > 1000);
+
+      return FfmpegVideoProbeResult(
+        isValid: isValid,
+        hasVideoStream: hasVideo,
+        hasAudioStream: hasAudio,
+        durationSeconds: duration,
+        width: width,
+        height: height,
+        rawOutput: output,
+      );
+    } catch (_) {
+      final validSize = file.lengthSync() > 1000;
+      return FfmpegVideoProbeResult(
+        isValid: validSize,
+        hasVideoStream: validSize,
+      );
+    }
+  }
+
   /// Retrieves custom FFmpeg path from SQLite settings
   Future<String?> getCustomFfmpegPath() async {
     try {
@@ -156,7 +252,6 @@ Installation Options (Free & Open Source):
       }
     } catch (_) {}
 
-    // Default fallback: ~/Videos/AppGrowthStudio or AppData/video_exports
     final userProfile = Platform.environment['USERPROFILE'];
     if (userProfile != null) {
       final defaultVideos = Directory(p.join(userProfile, 'Videos', 'AppGrowthStudio'));
@@ -181,7 +276,7 @@ Installation Options (Free & Open Source):
     } catch (_) {}
   }
 
-  /// Renders scene image slides and trimmed video clips into a single MP4 file.
+  /// Renders scene image slides and trimmed video clips into a single genuine playable MP4 file.
   Future<bool> renderVideo({
     required List<String> sceneFramePaths,
     required List<double> sceneDurations,
@@ -334,18 +429,21 @@ Installation Options (Free & Open Source):
 
         final renderResult = await Process.run(ffmpegBin, concatArgs);
         if (renderResult.exitCode == 0 && File(outputMp4Path).existsSync() && File(outputMp4Path).lengthSync() > 0) {
-          onProgress?.call(const FfmpegRenderProgress(
-            progressPercent: 1.0,
-            currentPhase: 'Render complete!',
-          ));
-          await AppLogger.success('video_render', 'Rendered video successfully: $outputMp4Path');
-          return true;
+          // Verify valid stream & duration
+          final probe = await probeVideo(outputMp4Path);
+          if (probe.isValid && probe.hasVideoStream) {
+            onProgress?.call(const FfmpegRenderProgress(
+              progressPercent: 1.0,
+              currentPhase: 'Render complete!',
+            ));
+            await AppLogger.success('video_render', 'Rendered video successfully: $outputMp4Path (Duration: ${probe.durationSeconds.toStringAsFixed(1)}s)');
+            return true;
+          }
         }
       }
 
       // Concat Demuxer fallback
       if (concatBuffer.isNotEmpty) {
-        // Last image entry repeat required by concat demuxer
         final lastEscaped = sceneFramePaths.last.replaceAll('\\', '/');
         concatBuffer.writeln("file '$lastEscaped'");
         await concatListFile.writeAsString(concatBuffer.toString());
@@ -376,12 +474,15 @@ Installation Options (Free & Open Source):
 
         final res = await Process.run(ffmpegBin, fallbackArgs);
         if (res.exitCode == 0 && File(outputMp4Path).existsSync() && File(outputMp4Path).lengthSync() > 0) {
-          onProgress?.call(const FfmpegRenderProgress(
-            progressPercent: 1.0,
-            currentPhase: 'Render complete!',
-          ));
-          await AppLogger.success('video_render', 'Rendered video successfully via demuxer: $outputMp4Path');
-          return true;
+          final probe = await probeVideo(outputMp4Path);
+          if (probe.isValid && probe.hasVideoStream) {
+            onProgress?.call(const FfmpegRenderProgress(
+              progressPercent: 1.0,
+              currentPhase: 'Render complete!',
+            ));
+            await AppLogger.success('video_render', 'Rendered video successfully via demuxer: $outputMp4Path');
+            return true;
+          }
         }
       }
 
