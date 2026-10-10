@@ -2,7 +2,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Database schema definitions and migrations for AppGrowth Studio.
 class DatabaseMigrations {
-  static const int currentVersion = 3;
+  static const int currentVersion = 4;
 
   static Future<void> onCreate(Database db, int version) async {
     final batch = db.batch();
@@ -317,6 +317,38 @@ class DatabaseMigrations {
       );
     ''');
 
+    // 19. video_projects (v4)
+    batch.execute('''
+      CREATE TABLE video_projects (
+        id TEXT PRIMARY KEY,
+        app_id TEXT,
+        template_type TEXT NOT NULL DEFAULT 'feature_showcase',
+        source_type TEXT NOT NULL DEFAULT 'mixed',
+        title TEXT NOT NULL,
+        aspect_ratio TEXT NOT NULL DEFAULT '9:16',
+        resolution TEXT NOT NULL DEFAULT '1080p',
+        total_duration_seconds REAL NOT NULL DEFAULT 15.0,
+        scenes TEXT NOT NULL DEFAULT '[]',
+        audio_narration_script TEXT NOT NULL DEFAULT '',
+        input_app_url TEXT,
+        input_text_prompt TEXT,
+        input_media_paths TEXT NOT NULL DEFAULT '[]',
+        caption_style TEXT NOT NULL DEFAULT 'modern',
+        transition_style TEXT NOT NULL DEFAULT 'fade',
+        background_music_path TEXT,
+        background_music_volume REAL NOT NULL DEFAULT 0.2,
+        enable_voice_narration INTEGER NOT NULL DEFAULT 0,
+        export_status TEXT NOT NULL DEFAULT 'draft',
+        exported_file_path TEXT,
+        file_size_bytes INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE SET NULL
+      );
+    ''');
+    batch.execute('CREATE INDEX idx_video_projects_app ON video_projects(app_id);');
+    batch.execute('CREATE INDEX idx_video_projects_status ON video_projects(export_status);');
+
     await batch.commit(noResult: true);
   }
 
@@ -379,6 +411,39 @@ class DatabaseMigrations {
           await db.execute(sql);
         } catch (_) {}
       }
+    }
+
+    if (oldVersion < 4) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS video_projects (
+          id TEXT PRIMARY KEY,
+          app_id TEXT,
+          template_type TEXT NOT NULL DEFAULT 'feature_showcase',
+          source_type TEXT NOT NULL DEFAULT 'mixed',
+          title TEXT NOT NULL,
+          aspect_ratio TEXT NOT NULL DEFAULT '9:16',
+          resolution TEXT NOT NULL DEFAULT '1080p',
+          total_duration_seconds REAL NOT NULL DEFAULT 15.0,
+          scenes TEXT NOT NULL DEFAULT '[]',
+          audio_narration_script TEXT NOT NULL DEFAULT '',
+          input_app_url TEXT,
+          input_text_prompt TEXT,
+          input_media_paths TEXT NOT NULL DEFAULT '[]',
+          caption_style TEXT NOT NULL DEFAULT 'modern',
+          transition_style TEXT NOT NULL DEFAULT 'fade',
+          background_music_path TEXT,
+          background_music_volume REAL NOT NULL DEFAULT 0.2,
+          enable_voice_narration INTEGER NOT NULL DEFAULT 0,
+          export_status TEXT NOT NULL DEFAULT 'draft',
+          exported_file_path TEXT,
+          file_size_bytes INTEGER,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE SET NULL
+        );
+      ''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_video_projects_app ON video_projects(app_id);');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_video_projects_status ON video_projects(export_status);');
     }
   }
 }

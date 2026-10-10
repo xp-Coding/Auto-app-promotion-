@@ -150,3 +150,43 @@ All notable changes to this project will be documented in this file.
   * Added `test/backup/backup_test.dart`: SQLite header validation and backup manifest serialization.
   * Total automated test count expanded from 32 to **38 passing tests**; **0 issues** on `flutter analyze`.
 
+## [2.0.0] - Autonomous App Promotion Autopilot (Completed)
+
+### Added
+* **One-Input Onboarding (`AutopilotStudioScreen`):**
+  * Extract public metadata, icons, and screenshots from any Google Play Store URL or package name.
+  * Editable profile synthesis and real-time Listing Integrity checklist.
+* **10-Step Autonomous Promotion Pipeline (`AutopilotOrchestrator`):**
+  * 30-day cross-platform marketing calendar generation with platform-tailored copywriting.
+  * High-resolution promotional card and video project generation.
+  * Direct enqueueing of eligible posts to publishing queue.
+* **Zero Mandatory Subscriptions:**
+  * 100% offline local template engine as default.
+  * Optional BYO AI provider support for Google Gemini, Ollama, and OpenAI.
+
+## [2.1.0] - Multi-Input Video Creator & Local Export Engine (Completed)
+
+### Added
+* **Multi-Input Video Creator (`VideoCreatorStudioView`):**
+  * Synthesize promotional videos from any single source or any mix of 4 inputs: App URL, screenshots/images, video clips with trim boundaries, and text prompt.
+  * Integrated directly into Content Studio under the Video Template Studio tab.
+* **9 Video Template Archetypes:**
+  * App Feature Showcase, Problem & Solution, App Tutorial, Launch Announcement, Before-and-After Demo, App Installation Guide, Promotional Slideshow, Video Enhancement, and Text-to-Video Promo.
+* **Aspect Ratios & Resolutions:**
+  * 9:16 Vertical, 16:9 Landscape, 1:1 Square in 1080p and 720p.
+  * Anti-distortion contain scaling with ambient dark framing.
+* **Mandatory Local Export & Dialogs (`NativeFileDialogHelper`):**
+  * Native Windows `SaveFileDialog` and `FolderBrowserDialog` without third-party plugins or Developer Mode symlinks.
+  * Direct "Export Video to Computer" and "Open in Explorer" actions.
+  * Configurable default export folder in Settings.
+* **Local Processing & FFmpeg Engine (`FfmpegService`):**
+  * Automatic FFmpeg detection from PATH, WinGet, Chocolatey, or custom settings.
+  * Zero-dependency fallback producing full HTML5 preview player, Canvas frames, SRT subtitles, and `.bat` compiler script.
+* **Database Migration & Persistence (`VideoProjectRepository`):**
+  * SQLite schema version 4 with `video_projects` table.
+  * Reopen, modify, and re-export past video projects from Saved Projects library.
+* **Automated Test Suite Expansion (`test/video_creator_workflow_test.dart`):**
+  * 9 scenario tests covering all input modes, export, persistence, error handling, and dimension verification.
+  * All 58 tests passing; 0 issues on `flutter analyze`.
+
+

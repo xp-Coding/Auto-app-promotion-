@@ -8,6 +8,7 @@ import '../../../core/database/app_database.dart';
 import '../../apps/models/app_model.dart';
 import '../../media_library/models/media_item_model.dart';
 import '../../media_library/repositories/media_repository.dart';
+import '../../content_studio/repositories/video_project_repository.dart';
 import '../models/video_project_model.dart';
 import 'video_project_exporter.dart';
 
@@ -25,10 +26,12 @@ class GeneratedCreativePackage {
 
 class CreativeAssetGenerator {
   final MediaRepository _mediaRepo;
+  final VideoProjectRepository _videoProjectRepo;
   final Uuid _uuid = const Uuid();
 
-  CreativeAssetGenerator({MediaRepository? mediaRepo})
-      : _mediaRepo = mediaRepo ?? MediaRepository();
+  CreativeAssetGenerator({MediaRepository? mediaRepo, VideoProjectRepository? videoProjectRepo})
+      : _mediaRepo = mediaRepo ?? MediaRepository(),
+        _videoProjectRepo = videoProjectRepo ?? VideoProjectRepository();
 
   /// Generates real graphic promotional cards and editable video projects
   Future<GeneratedCreativePackage> generateCreativesForApp({
@@ -138,6 +141,9 @@ class CreativeAssetGenerator {
       }
 
       videoProjects.add(project);
+
+      // Persist to SQLite video_projects table
+      await _videoProjectRepo.saveProject(project);
 
       // Save project definition manifest
       final manifestFile = File(p.join(outputDir.path, '${project.id}_manifest.json'));

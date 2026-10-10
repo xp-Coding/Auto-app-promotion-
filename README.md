@@ -28,12 +28,37 @@ Once launched, the engine autonomously executes a complete 10-step promotional p
 9. **Publishing Queue Dispatch:** Directly queues eligible posts into `post_jobs` according to configured daily limits and scheduling windows.
 10. **Run State Persistence:** Commits full metrics, asset links, and status into SQLite.
 
-### 3. Video & Graphic Production Suite
-* **Canvas Slide Renderer:** Generates crisp 1080x1920 vertical and 1920x1080 landscape slide frames in `video_exports/<id>/frames/scene_XX.png` featuring genuine icons, screenshots, and typography.
-* **Timed SRT Subtitles:** Generates standard RFC-compliant subtitle tracks (`subtitles.srt`) mapped to scene durations.
-* **Voiceover Scripts:** Formulates complete scene-by-scene narration scripts (`narration_script.txt`).
-* **Interactive HTML5 Player:** Generates a standalone `interactive_preview.html` file that plays the video slides in real time in any modern browser without third-party dependencies.
-* **FFmpeg Batch Renderer:** Generates `render_mp4.bat` to compile scene frames into high-definition MP4. If FFmpeg is installed in PATH, compilation runs automatically.
+### 3. Multi-Input Video Creator & Local Export Studio (`VideoCreatorStudioView`)
+Located under **Content Studio -> Video Template Studio**, this studio allows users to synthesize high-impact promotional videos from any single input or any combination of four inputs:
+* **Input A: App Store Listing URL:** Scrapes app metadata, description, icon, and listing screenshots from Google Play Store.
+* **Input B: App Screenshots & Images:** Reorderable local images (PNG, JPG, JPEG) fitted seamlessly without distortion or stretching.
+* **Input C: Existing Video Footage:** Local clips (MP4, MOV) with customizable start and end trimming points.
+* **Input D: Text & Feature Prompt:** Auto-converts custom feature points or value propositions into a structured storyboard.
+* **Mix-and-Match Any Inputs:** Works with URL only, screenshots only, clips only, text only, or any combination (e.g. Screenshots + Text, Clips + Text, or all 4 combined).
+
+#### 🎬 9 Supported Video Template Archetypes
+1. **App Feature Showcase:** Highlights core tools, benefits, and value propositions.
+2. **Problem and Solution:** Hooks the user with daily struggles and introduces the app as the answer.
+3. **App Tutorial:** Step-by-step walkthrough of key workflows.
+4. **App Launch Announcement:** High-energy celebration of a new version or major update.
+5. **Before-and-After Demo:** Contrasts routine frustration with the streamlined app experience.
+6. **App Installation Guide:** Direct onboarding instructions for first-time users.
+7. **Promotional Slideshow:** Elegant image-driven slideshow with ambient animated backdrop.
+8. **Existing-Video Enhancement:** Overlays subtitles, titles, and CTA badges on existing footage.
+9. **Text-to-Video Presentation:** Synthesizes a complete promotional video from pure text copy.
+
+#### 📐 Aspect Ratios & Formats
+* **Vertical 9:16:** Reels, Shorts, and TikTok (1080x1920 or 720x1280).
+* **Landscape 16:9:** YouTube and Web (1920x1080 or 1280x720).
+* **Square 1:1:** Social Feeds (1080x1080 or 720x720).
+* **Anti-Distortion Guarantee:** Media is letterboxed with ambient dark framing (`contain` mode); never stretched or squished.
+
+#### 💾 Local Windows Export & FFmpeg Engine
+* **Native Windows Save File Dialog:** Direct "Export Video to Computer" button opens Windows `SaveFileDialog` to select custom destination folder and filename.
+* **Configurable Default Export Folder:** Set your preferred default folder in **Settings** (defaults to `Videos/AppGrowthStudio`) with instant "Open in Explorer" access.
+* **FFmpeg Acceleration:** Detects FFmpeg from Windows PATH, custom setting paths, WinGet, or Chocolatey. Provides an instant setup command (`winget install Gyan.FFmpeg`) when missing.
+* **Zero Dependency Fallback:** If FFmpeg is not installed, the application automatically produces a complete production package: high-res Canvas slide frames, timed RFC-compliant SRT subtitles, voiceover scripts, an interactive offline HTML5 video player, and a one-click `.bat` encoder script.
+* **100% Offline & Account-Independent:** Export functions entirely on your computer without requiring social accounts, API keys, or internet connectivity.
 
 ### 4. AI & Cost Requirements: Zero Mandatory Subscriptions
 * **100% Free Local Template Engine (Default):** Runs completely offline without API keys or recurring costs.

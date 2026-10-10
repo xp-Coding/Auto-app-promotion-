@@ -7,70 +7,152 @@ import '../providers/content_studio_providers.dart';
 import 'post_editor_dialog.dart';
 import 'post_preview_dialog.dart';
 import '../../publishing/providers/publishing_providers.dart';
+import 'video_creator_studio_view.dart';
 
 class ContentStudioScreen extends ConsumerWidget {
   const ContentStudioScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        appBar: PreferredSize(
+          preferredSize: const Size.fromHeight(56),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'Content Studio',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 20),
+                    Container(
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Theme.of(context).dividerColor),
+                      ),
+                      child: TabBar(
+                        isScrollable: true,
+                        tabAlignment: TabAlignment.start,
+                        indicatorSize: TabBarIndicatorSize.tab,
+                        indicator: BoxDecoration(
+                          color: AppTheme.primaryIndigo.withOpacity(0.18),
+                          borderRadius: BorderRadius.circular(7),
+                          border: Border.all(color: AppTheme.primaryIndigo.withOpacity(0.5)),
+                        ),
+                        labelColor: AppTheme.primaryIndigo,
+                        unselectedLabelColor: AppTheme.darkTextSecondary,
+                        labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal, fontSize: 13),
+                        tabs: const [
+                          Tab(
+                            iconMargin: EdgeInsets.zero,
+                            child: Row(
+                              children: [
+                                Icon(Icons.video_collection_outlined, size: 16),
+                                SizedBox(width: 8),
+                                Text('Video Template Studio'),
+                              ],
+                            ),
+                          ),
+                          Tab(
+                            iconMargin: EdgeInsets.zero,
+                            child: Row(
+                              children: [
+                                Icon(Icons.article_outlined, size: 16),
+                                SizedBox(width: 8),
+                                Text('Social Posts & Copy'),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            const VideoCreatorStudioView(),
+            _buildSocialPostsTab(context, ref),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSocialPostsTab(BuildContext context, WidgetRef ref) {
     final postsAsync = ref.watch(contentPostsListProvider);
     final selectedApp = ref.watch(selectedAppProvider);
     final filterState = ref.watch(contentFilterProvider);
 
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Padding(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text(
-                          'Content Studio',
-                          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(width: 10),
-                        postsAsync.maybeWhen(
-                          data: (posts) => Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: AppTheme.primaryIndigo.withOpacity(0.15),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              '${posts.length} drafts',
-                              style: const TextStyle(color: AppTheme.primaryIndigo, fontSize: 12, fontWeight: FontWeight.bold),
-                            ),
+    return Padding(
+      padding: const EdgeInsets.all(24.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Text(
+                        'Social Media Drafts',
+                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(width: 10),
+                      postsAsync.maybeWhen(
+                        data: (posts) => Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryIndigo.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          orElse: () => const SizedBox.shrink(),
+                          child: Text(
+                            '${posts.length} drafts',
+                            style: const TextStyle(color: AppTheme.primaryIndigo, fontSize: 12, fontWeight: FontWeight.bold),
+                          ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      selectedApp != null
-                          ? 'Generating tailored promotional copy for ${selectedApp.name}'
-                          : 'Select an application from the top bar to filter content.',
-                      style: const TextStyle(fontSize: 13, color: AppTheme.darkTextSecondary),
-                    ),
-                  ],
-                ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Create New Draft'),
-                  onPressed: () => PostEditorDialog.show(context),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
+                        orElse: () => const SizedBox.shrink(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    selectedApp != null
+                        ? 'Generating tailored promotional copy for ${selectedApp.name}'
+                        : 'Select an application from the top bar to filter content.',
+                    style: const TextStyle(fontSize: 13, color: AppTheme.darkTextSecondary),
+                  ),
+                ],
+              ),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Create New Draft'),
+                onPressed: () => PostEditorDialog.show(context),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
 
             // Filter Bar
             Card(
@@ -162,8 +244,7 @@ class ContentStudioScreen extends ConsumerWidget {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 
   Widget _buildEmptyState(BuildContext context) {

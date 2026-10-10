@@ -7,7 +7,9 @@ import '../../../core/database/app_database.dart';
 import '../../../core/logging/activity_log_repository.dart';
 import '../../../core/services/safe_background_worker.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/utils/native_file_dialog_helper.dart';
 import '../../apps/providers/app_providers.dart';
+import '../../content_studio/providers/video_creator_providers.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -22,11 +24,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   List<File> _backups = [];
   bool _isBackingUp = false;
   bool _isRestoring = false;
+  final _ffmpegPathController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _loadSystemInfo();
+    _loadFfmpegSettings();
+  }
+
+  @override
+  void dispose() {
+    _ffmpegPathController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadFfmpegSettings() async {
+    final custom = await ref.read(ffmpegServiceProvider).getCustomFfmpegPath();
+    if (custom != null && mounted) {
+      setState(() {
+        _ffmpegPathController.text = custom;
+      });
+    }
   }
 
   Future<void> _loadSystemInfo() async {
@@ -295,6 +314,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: 20),
 
+            // Card: Video Creation & Local Export Engine
+            _buildVideoExportCard(),
+            const SizedBox(height: 20),
+
             // Card 4: Maintenance & Data Retention
             _buildCard(
               title: 'Data Retention & Maintenance',
@@ -320,6 +343,227 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildVideoExportCard() {
+    final ffmpegStatusAsync = ref.watch(ffmpegStatusProvider);
+    final defaultExportFolderAsync = ref.watch(defaultExportFolderProvider);
+
+    return _buildCard(
+      title: 'Video Creation & Local Export Engine',
+      icon: Icons.video_settings_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Engine Status Row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('FFmpeg Processing Engine', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  SizedBox(height: 2),
+                  Text('Used for hardware-accelerated local MP4 compilation and clip trimming.', style: TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary)),
+                ],
+              ),
+              ffmpegStatusAsync.when(
+                data: (status) => Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: status.isAvailable ? AppTheme.accentEmerald.withOpacity(0.15) : AppTheme.accentAmber.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: status.isAvailable ? AppTheme.accentEmerald.withOpacity(0.4) : AppTheme.accentAmber.withOpacity(0.4),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        status.isAvailable ? Icons.check_circle : Icons.warning_amber,
+                        size: 14,
+                        color: status.isAvailable ? AppTheme.accentEmerald : AppTheme.accentAmber,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        status.isAvailable ? 'Installed & Ready' : 'Setup Required',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: status.isAvailable ? AppTheme.accentEmerald : AppTheme.accentAmber,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                loading: () => const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                error: (_, _) => const Text('Error detecting FFmpeg', style: TextStyle(color: AppTheme.accentRose, fontSize: 12)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Default Export Directory
+          const Text('Default Video Export Folder', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          const SizedBox(height: 4),
+          const Text('Directory where rendered promotional videos and project packages are saved.', style: TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary)),
+          const SizedBox(height: 8),
+          defaultExportFolderAsync.when(
+            data: (folder) => Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).scaffoldBackgroundColor,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Theme.of(context).dividerColor),
+                    ),
+                    child: SelectableText(
+                      folder,
+                      style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.folder_open, size: 16),
+                  label: const Text('Change Folder'),
+                  onPressed: () async {
+                    final picked = await NativeFileDialogHelper.pickDirectory(
+                      title: 'Select Default Video Export Folder',
+                      initialDirectory: folder,
+                    );
+                    if (picked != null) {
+                      await ref.read(ffmpegServiceProvider).setDefaultExportFolder(picked);
+                      ref.invalidate(defaultExportFolderProvider);
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Default export folder updated to: $picked'), backgroundColor: AppTheme.accentEmerald),
+                      );
+                    }
+                  },
+                ),
+                const SizedBox(width: 8),
+                IconButton.outlined(
+                  icon: const Icon(Icons.open_in_new, size: 16),
+                  tooltip: 'Open in Windows Explorer',
+                  onPressed: () => NativeFileDialogHelper.openDirectory(folder),
+                ),
+              ],
+            ),
+            loading: () => const LinearProgressIndicator(),
+            error: (err, _) => Text('Error loading export folder: $err', style: const TextStyle(color: AppTheme.accentRose, fontSize: 12)),
+          ),
+          const SizedBox(height: 16),
+
+          // Custom FFmpeg Executable Path
+          const Text('Custom FFmpeg Executable (Optional)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          const SizedBox(height: 4),
+          const Text('If FFmpeg is not in your Windows PATH, select the ffmpeg.exe binary directly.', style: TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary)),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _ffmpegPathController,
+                  decoration: const InputDecoration(
+                    hintText: r'e.g. C:\ffmpeg\bin\ffmpeg.exe',
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.file_open_outlined, size: 16),
+                label: const Text('Browse...'),
+                onPressed: () async {
+                  final picked = await NativeFileDialogHelper.pickSingleFile(
+                    title: 'Select ffmpeg.exe',
+                    filter: 'Executable Files (*.exe)|*.exe|All Files (*.*)|*.*',
+                  );
+                  if (picked != null) {
+                    setState(() {
+                      _ffmpegPathController.text = picked;
+                    });
+                    await ref.read(ffmpegServiceProvider).setCustomFfmpegPath(picked);
+                    ref.invalidate(ffmpegStatusProvider);
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Custom FFmpeg path saved!'), backgroundColor: AppTheme.accentEmerald),
+                    );
+                  }
+                },
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: () async {
+                  await ref.read(ffmpegServiceProvider).setCustomFfmpegPath(_ffmpegPathController.text.trim());
+                  ref.invalidate(ffmpegStatusProvider);
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('FFmpeg path applied and verified!'), backgroundColor: AppTheme.accentEmerald),
+                  );
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          ),
+
+          // Setup Guide Accordion if FFmpeg is missing
+          ffmpegStatusAsync.maybeWhen(
+            data: (status) {
+              if (status.isAvailable) {
+                return Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.check_circle_outline, size: 14, color: AppTheme.accentEmerald),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Active binary: ${status.executablePath ?? "System PATH"} (${status.versionInfo ?? ""})',
+                          style: const TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return Container(
+                margin: const EdgeInsets.only(top: 16),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.accentAmber.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.accentAmber.withOpacity(0.3)),
+                ),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.lightbulb_outline, size: 16, color: AppTheme.accentAmber),
+                        SizedBox(width: 6),
+                        Text('FFmpeg Setup Guide (Free & Open Source)', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: AppTheme.accentAmber)),
+                      ],
+                    ),
+                    SizedBox(height: 6),
+                    Text(
+                      'Run this command in Windows Terminal / PowerShell to install automatically:\nwinget install Gyan.FFmpeg\n\nOr download ffmpeg-release-essentials.zip from gyan.dev/ffmpeg/builds and browse to ffmpeg.exe above.',
+                      style: TextStyle(fontSize: 11, height: 1.4),
+                    ),
+                  ],
+                ),
+              );
+            },
+            orElse: () => const SizedBox.shrink(),
+          ),
+        ],
       ),
     );
   }
