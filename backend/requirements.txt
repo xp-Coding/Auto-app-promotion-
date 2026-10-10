@@ -1,0 +1,18 @@
+# ViMax AI Video Generation Framework & Backend Requirements
+flask>=3.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+pillow>=10.0.0
+numpy>=1.26.0
+moviepy>=1.0.3
+imageio>=2.31.0
+imageio-ffmpeg>=0.4.9
+scenedetect>=0.6.2
+opencv-python-headless>=4.8.0
+pyyaml>=6.0.1
+pydantic>=2.5.0
+langchain>=0.1.0
+langchain-community>=0.0.10
+langchain-openai>=0.0.2
+openai>=1.10.0
+edge-tts>=6.1.9

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,9 +7,11 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/utils/native_file_dialog_helper.dart';
 import '../../../core/utils/url_launcher.dart';
 import '../../apps/providers/app_providers.dart';
+import '../../autopilot/domain/video_project_exporter.dart';
 import '../../autopilot/models/video_project_model.dart';
 import '../domain/ffmpeg_service.dart';
 import '../domain/storyboard_planner_service.dart';
+import '../domain/vimax_service.dart';
 import '../domain/visual_library_service.dart';
 import '../providers/video_creator_providers.dart';
 
@@ -29,7 +32,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
   final List<String> _selectedClips = [];
 
   // Configuration options
-  String _selectedTemplate = 'feature_showcase';
+  String _selectedTemplate = 'saas_product_ad';
   String _selectedAspectRatio = '9:16';
   String _selectedResolution = '1080p';
   double _targetDuration = 15.0;
@@ -52,6 +55,11 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
   bool _isAnalyzingUrl = false;
   String? _urlError;
   String? _fetchedAppTitle;
+  WebsiteExtractedMetadata? _extractedWebsiteMetadata;
+
+  // ViMax Background Job state
+  Timer? _jobPollTimer;
+  bool _isSubmittingVimaxJob = false;
 
   @override
   void initState() {
@@ -61,6 +69,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
 
   @override
   void dispose() {
+    _jobPollTimer?.cancel();
     _tabController.dispose();
     _urlController.dispose();
     _textPromptController.dispose();
@@ -93,6 +102,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
   @override
   Widget build(BuildContext context) {
     final ffmpegStatusAsync = ref.watch(ffmpegStatusProvider);
+    final vimaxStatusAsync = ref.watch(vimaxStatusProvider);
     final currentProject = ref.watch(currentVideoProjectProvider);
     final exportState = ref.watch(videoExportStateProvider);
 
@@ -130,7 +140,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                       Text(
                         currentProject != null
                             ? 'Active Project: ${currentProject.title} (${currentProject.aspectRatio}, ${currentProject.scenes.length} scenes)'
-                            : 'Mix any inputs: App URL, screenshots, video clips, text, and built-in visual library.',
+                            : 'Mix any inputs: Website URL, screenshots, clips, text prompt with ViMax agentic pipeline.',
                         style: const TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary),
                       ),
                     ],
@@ -138,51 +148,105 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                 ],
               ),
 
-              // FFmpeg Status Badge
-              ffmpegStatusAsync.when(
-                data: (status) {
-                  return InkWell(
-                    onTap: () => _showFfmpegInfoDialog(context, status),
-                    borderRadius: BorderRadius.circular(20),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: status.isAvailable
-                            ? AppTheme.accentEmerald.withOpacity(0.15)
-                            : AppTheme.accentAmber.withOpacity(0.15),
+              // Badges: ViMax Engine & FFmpeg Status
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // ViMax Engine Status Badge
+                  vimaxStatusAsync.when(
+                    data: (vStatus) {
+                      return InkWell(
+                        onTap: () => _showVimaxInfoDialog(context, vStatus),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: status.isAvailable
-                              ? AppTheme.accentEmerald.withOpacity(0.4)
-                              : AppTheme.accentAmber.withOpacity(0.4),
-                        ),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            status.isAvailable ? Icons.check_circle_outline : Icons.warning_amber_outlined,
-                            size: 14,
-                            color: status.isAvailable ? AppTheme.accentEmerald : AppTheme.accentAmber,
-                          ),
-                          const SizedBox(width: 6),
-                          Text(
-                            status.isAvailable ? 'FFmpeg Ready' : 'FFmpeg Not Detected',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: status.isAvailable ? AppTheme.accentEmerald : AppTheme.accentAmber,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: vStatus.isAvailable
+                                ? AppTheme.primaryIndigo.withOpacity(0.15)
+                                : AppTheme.accentAmber.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: vStatus.isAvailable
+                                  ? AppTheme.primaryIndigo.withOpacity(0.4)
+                                  : AppTheme.accentAmber.withOpacity(0.4),
                             ),
                           ),
-                          const SizedBox(width: 4),
-                          const Icon(Icons.info_outline, size: 12, color: AppTheme.darkTextSecondary),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-                loading: () => const SizedBox.shrink(),
-                error: (_, _) => const SizedBox.shrink(),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                vStatus.isAvailable ? Icons.auto_awesome : Icons.cloud_off_outlined,
+                                size: 14,
+                                color: vStatus.isAvailable ? AppTheme.primaryIndigo : AppTheme.accentAmber,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                vStatus.isAvailable ? 'ViMax AI Engine' : 'ViMax (Offline)',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: vStatus.isAvailable ? AppTheme.primaryIndigo : AppTheme.accentAmber,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Icon(Icons.info_outline, size: 12, color: AppTheme.darkTextSecondary),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    loading: () => const SizedBox.shrink(),
+                    error: (_, _) => const SizedBox.shrink(),
+                  ),
+                  const SizedBox(width: 10),
+
+                  // FFmpeg Status Badge
+                  ffmpegStatusAsync.when(
+                    data: (status) {
+                      return InkWell(
+                        onTap: () => _showFfmpegInfoDialog(context, status),
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: status.isAvailable
+                                ? AppTheme.accentEmerald.withOpacity(0.15)
+                                : AppTheme.accentAmber.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: status.isAvailable
+                                  ? AppTheme.accentEmerald.withOpacity(0.4)
+                                  : AppTheme.accentAmber.withOpacity(0.4),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                status.isAvailable ? Icons.check_circle_outline : Icons.warning_amber_outlined,
+                                size: 14,
+                                color: status.isAvailable ? AppTheme.accentEmerald : AppTheme.accentAmber,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                status.isAvailable ? 'FFmpeg Ready' : 'FFmpeg Not Detected',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: status.isAvailable ? AppTheme.accentEmerald : AppTheme.accentAmber,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Icon(Icons.info_outline, size: 12, color: AppTheme.darkTextSecondary),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    loading: () => const SizedBox.shrink(),
+                    error: (_, _) => const SizedBox.shrink(),
+                  ),
+                ],
               ),
             ],
           ),
@@ -307,31 +371,72 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
               Container(
                 padding: const EdgeInsets.all(6),
                 decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.15), borderRadius: BorderRadius.circular(6)),
-                child: const Icon(Icons.link, color: Colors.blueAccent, size: 18),
+                child: const Icon(Icons.language, color: Colors.blueAccent, size: 18),
               ),
               const SizedBox(width: 8),
-              const Text('Input A: Google Play Store URL', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const Text('Input A: Website or App URL', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: AppTheme.primaryIndigo.withOpacity(0.15), borderRadius: BorderRadius.circular(4)),
+                child: const Text('ViMax Extractor', style: TextStyle(fontSize: 10, color: AppTheme.primaryIndigo, fontWeight: FontWeight.bold)),
+              ),
             ],
           ),
           const SizedBox(height: 8),
-          const Text('Extracts app title, category, description, and store screenshots automatically.', style: TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary)),
+          const Text('Extracts brand name, title, description, key features, colors, and screenshots from any public website or Play Store listing.', style: TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary)),
           const SizedBox(height: 12),
           TextField(
             controller: _urlController,
             decoration: InputDecoration(
-              hintText: 'https://play.google.com/store/apps/details?id=com.example.app',
+              hintText: 'https://example.com or https://play.google.com/store/apps/...',
               border: const OutlineInputBorder(),
               isDense: true,
               suffixIcon: _isAnalyzingUrl
                   ? const SizedBox(width: 20, height: 20, child: Padding(padding: EdgeInsets.all(10), child: CircularProgressIndicator(strokeWidth: 2)))
-                  : IconButton(icon: const Icon(Icons.search, size: 20), tooltip: 'Quick inspect URL', onPressed: _handleAnalyzeUrl),
+                  : IconButton(icon: const Icon(Icons.search, size: 20), tooltip: 'Extract Brand & Website Assets', onPressed: _handleAnalyzeUrl),
             ),
           ),
           if (_urlError != null) ...[
             const SizedBox(height: 6),
             Text(_urlError!, style: const TextStyle(fontSize: 11, color: Colors.redAccent)),
           ],
-          if (_fetchedAppTitle != null) ...[
+          if (_extractedWebsiteMetadata != null) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppTheme.accentEmerald.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppTheme.accentEmerald.withOpacity(0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.check_circle, size: 14, color: AppTheme.accentEmerald),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '${_extractedWebsiteMetadata!.brandName}: ${_extractedWebsiteMetadata!.title}',
+                          style: const TextStyle(fontSize: 12, color: AppTheme.accentEmerald, fontWeight: FontWeight.bold),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_extractedWebsiteMetadata!.features.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Detected ${_extractedWebsiteMetadata!.features.length} features • ${_extractedWebsiteMetadata!.localImages.length} images downloaded',
+                      style: const TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ] else if (_fetchedAppTitle != null) ...[
             const SizedBox(height: 6),
             Row(
               children: [
@@ -664,6 +769,13 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                   value: _selectedTemplate,
                   decoration: const InputDecoration(labelText: 'Template Archetype', border: OutlineInputBorder()),
                   items: const [
+                    DropdownMenuItem(value: 'saas_product_ad', child: Text('ViMax: SaaS Product Advertisement')),
+                    DropdownMenuItem(value: 'mobile_app_promo', child: Text('ViMax: Mobile App Promotion')),
+                    DropdownMenuItem(value: 'website_promo', child: Text('ViMax: Website & Web App Promo')),
+                    DropdownMenuItem(value: 'ecommerce_ad', child: Text('ViMax: E-Commerce Product Ad')),
+                    DropdownMenuItem(value: 'startup_pitch', child: Text('ViMax: Startup & Pitch Promo')),
+                    DropdownMenuItem(value: 'feature_explainer', child: Text('ViMax: Feature Explainer')),
+                    DropdownMenuItem(value: 'cinematic_ad', child: Text('ViMax: Cinematic Brand Ad')),
                     DropdownMenuItem(value: 'feature_showcase', child: Text('App Feature Showcase')),
                     DropdownMenuItem(value: 'problem_solution', child: Text('Problem & Solution')),
                     DropdownMenuItem(value: 'quick_tutorial', child: Text('App Tutorial')),
@@ -1065,6 +1177,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
   Widget _buildExportStage() {
     final project = ref.watch(currentVideoProjectProvider);
     final exportState = ref.watch(videoExportStateProvider);
+    final vimaxJob = ref.watch(vimaxActiveJobProvider);
 
     if (project == null) {
       return const Center(child: Text('Please generate or select a video project first.'));
@@ -1077,37 +1190,175 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
         children: [
           const Text('Render & Export Video to Computer', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
-          const Text('Compile a genuine, playable H.264 / AAC MP4 video file directly to your local computer.', style: TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary)),
+          const Text('Generate and compile genuine, playable H.264 / AAC MP4 video files directly to your local computer.', style: TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary)),
           const SizedBox(height: 20),
 
-          // Render Progress Indicator if active
-          if (exportState.isRendering) ...[
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppTheme.primaryIndigo.withOpacity(0.4)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(exportState.statusMessage, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                      Text('${(exportState.progress * 100).toInt()}%', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  LinearProgressIndicator(value: exportState.progress, minHeight: 8, color: AppTheme.primaryIndigo),
-                ],
-              ),
+          // ViMax AI Video Generation Pipeline Card
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTheme.primaryIndigo.withOpacity(0.3)),
             ),
-            const SizedBox(height: 20),
-          ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryIndigo.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.auto_awesome, color: AppTheme.primaryIndigo, size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'ViMax AI Video Generation & Render Engine',
+                              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                            ),
+                            const Text(
+                              'Agentic pipeline: generative visuals, voiceover narration, ambient score, and FFmpeg assembly.',
+                              style: TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    ElevatedButton.icon(
+                      icon: _isSubmittingVimaxJob || (vimaxJob != null && vimaxJob.isRunning)
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.play_arrow, size: 18),
+                      label: Text(vimaxJob != null && vimaxJob.isRunning ? 'Generating Video...' : 'Generate with ViMax AI'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryIndigo,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                      ),
+                      onPressed: _isSubmittingVimaxJob || (vimaxJob != null && vimaxJob.isRunning) ? null : _handleStartVimaxGenerationJob,
+                    ),
+                  ],
+                ),
 
-          // Render Status & Result Card
+                // Active ViMax Job Progress Card
+                if (vimaxJob != null) ...[
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).canvasColor,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: vimaxJob.isFailed
+                            ? Colors.redAccent.withOpacity(0.4)
+                            : vimaxJob.isCompleted
+                                ? AppTheme.accentEmerald.withOpacity(0.4)
+                                : AppTheme.primaryIndigo.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: vimaxJob.isFailed
+                                        ? Colors.redAccent.withOpacity(0.15)
+                                        : vimaxJob.isCompleted
+                                            ? AppTheme.accentEmerald.withOpacity(0.15)
+                                            : AppTheme.primaryIndigo.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'Stage: ${vimaxJob.stage}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                      color: vimaxJob.isFailed
+                                          ? Colors.redAccent
+                                          : vimaxJob.isCompleted
+                                              ? AppTheme.accentEmerald
+                                              : AppTheme.primaryIndigo,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  vimaxJob.stageMessage,
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                            Row(
+                              children: [
+                                Text(
+                                  '${(vimaxJob.progress * 100).toInt()}% • ${vimaxJob.elapsedSeconds.toStringAsFixed(1)}s elapsed',
+                                  style: const TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary),
+                                ),
+                                if (vimaxJob.isRunning) ...[
+                                  const SizedBox(width: 8),
+                                  TextButton(
+                                    onPressed: _handleCancelVimaxJob,
+                                    child: const Text('Cancel', style: TextStyle(color: Colors.redAccent, fontSize: 12)),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        LinearProgressIndicator(
+                          value: vimaxJob.isRunning ? vimaxJob.progress : (vimaxJob.isCompleted ? 1.0 : 0.0),
+                          minHeight: 6,
+                          color: vimaxJob.isCompleted ? AppTheme.accentEmerald : AppTheme.primaryIndigo,
+                        ),
+
+                        // Real-time Logs Console
+                        if (vimaxJob.logs.isNotEmpty) ...[
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.4),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('ViMax Engine Live Stream Logs:', style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
+                                const SizedBox(height: 4),
+                                ...vimaxJob.logs.reversed.take(5).toList().reversed.map((l) => Text(
+                                      l,
+                                      style: const TextStyle(fontSize: 10, fontFamily: 'monospace', color: Colors.greenAccent),
+                                    )),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Offline Canvas Compiler Card
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -1132,14 +1383,19 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                         ),
                       ],
                     ),
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.play_circle_fill, size: 18),
-                      label: const Text('Render Video'),
-                      style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryIndigo, foregroundColor: Colors.white),
+                    OutlinedButton.icon(
+                      icon: const Icon(Icons.slideshow, size: 18),
+                      label: const Text('Render with Offline Canvas Compiler'),
                       onPressed: exportState.isRendering ? null : _handleRenderVideo,
                     ),
                   ],
                 ),
+                if (exportState.isRendering) ...[
+                  const SizedBox(height: 16),
+                  LinearProgressIndicator(value: exportState.progress, minHeight: 6, color: AppTheme.primaryIndigo),
+                  const SizedBox(height: 6),
+                  Text('${exportState.statusMessage} (${(exportState.progress * 100).toInt()}%)', style: const TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary)),
+                ],
                 const Divider(height: 28),
 
                 // Granular Output Status Displays (Part A.4)
@@ -1385,6 +1641,34 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
     });
 
     try {
+      final vimaxService = ref.read(vimaxServiceProvider);
+      final webData = await vimaxService.extractWebsite(url);
+
+      if (webData != null && webData.isAccessible) {
+        setState(() {
+          _extractedWebsiteMetadata = webData;
+          _fetchedAppTitle = '${webData.brandName} - ${webData.title}';
+          if (_textPromptController.text.trim().isEmpty) {
+            final feats = webData.features.isNotEmpty
+                ? '\n\nKey Highlights:\n${webData.features.map((f) => '• $f').join('\n')}'
+                : '';
+            _textPromptController.text = '${webData.description}$feats';
+          }
+          for (final img in webData.localImages) {
+            if (!_selectedScreenshots.contains(img)) {
+              _selectedScreenshots.add(img);
+            }
+          }
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('✓ Extracted ${webData.brandName} (${webData.features.length} features, ${webData.localImages.length} images)')),
+          );
+        }
+        return;
+      }
+
+      // Fallback: Google Play Store planner inspection
       final planner = ref.read(storyboardPlannerServiceProvider);
       final testInput = StoryboardPlanInput(appUrl: url);
       final dummy = await planner.planStoryboard(testInput);
@@ -1393,7 +1677,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
       });
     } catch (e) {
       setState(() {
-        _urlError = 'Could not inspect app listing: $e';
+        _urlError = 'Could not inspect listing: $e';
       });
     } finally {
       setState(() => _isAnalyzingUrl = false);
@@ -1483,7 +1767,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
 
     if (!input.hasAnyInput) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please provide at least one input: App URL, screenshots, video clips, or text prompt.')),
+        const SnackBar(content: Text('Please provide at least one input: Website URL, screenshots, clips, or text prompt.')),
       );
       return;
     }
@@ -1491,8 +1775,79 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
     final reqId = ++_storyboardRequestId;
 
     try {
-      final planner = ref.read(storyboardPlannerServiceProvider);
-      final project = await planner.planStoryboard(input);
+      final vimaxService = ref.read(vimaxServiceProvider);
+      final vStatus = await vimaxService.checkStatus();
+
+      VideoProjectModel? project;
+
+      if (vStatus.isAvailable) {
+        final brandName = _extractedWebsiteMetadata?.brandName ?? selectedApp?.name ?? 'AppGrowth Studio';
+        final plannedScenes = await vimaxService.planStoryboard(
+          archetype: _selectedTemplate,
+          aspectRatio: _selectedAspectRatio,
+          resolution: _selectedResolution,
+          brandName: brandName,
+          productName: selectedApp?.name ?? _extractedWebsiteMetadata?.brandName,
+          tagline: _extractedWebsiteMetadata?.title,
+          description: _textPromptController.text.trim().isNotEmpty
+              ? _textPromptController.text.trim()
+              : _extractedWebsiteMetadata?.description,
+          features: _extractedWebsiteMetadata?.features ?? [],
+          callToAction: _extractedWebsiteMetadata?.callToAction ?? 'Download Today',
+          brandColor: _extractedWebsiteMetadata?.brandColor ?? '#2563EB',
+          userScript: _textPromptController.text.trim().isNotEmpty ? _textPromptController.text.trim() : null,
+          imagePaths: _selectedScreenshots,
+          videoClipPaths: _selectedClips,
+          targetScenes: (_targetDuration / 4.0).clamp(3, 8).toInt(),
+        );
+
+        if (plannedScenes != null && plannedScenes.isNotEmpty) {
+          final scenes = <VideoSceneModel>[];
+          for (int i = 0; i < plannedScenes.length; i++) {
+            final s = plannedScenes[i];
+            scenes.add(VideoSceneModel(
+              id: s['id']?.toString() ?? 'vimax_scene_${i + 1}',
+              sceneNumber: i + 1,
+              sceneTitle: s['title']?.toString() ?? s['scene_title']?.toString() ?? 'Scene ${i + 1}',
+              onScreenText: s['on_screen_text']?.toString() ?? '',
+              voiceOverNarration: s['narration']?.toString() ?? s['voice_over_narration']?.toString() ?? '',
+              subtitleText: s['subtitle']?.toString() ?? s['subtitle_text']?.toString() ?? s['narration']?.toString() ?? '',
+              visualDescription: s['visual_description']?.toString() ?? s['visual_prompt']?.toString() ?? 'ViMax visual composition',
+              durationSeconds: (s['duration'] as num?)?.toDouble() ?? 4.0,
+              badgeText: s['purpose']?.toString() ?? 'ViMax Scene',
+              imageAssetPath: s['image_asset_path']?.toString() ?? (_selectedScreenshots.length > i ? _selectedScreenshots[i] : null),
+              callToAction: s['call_to_action']?.toString(),
+            ));
+          }
+
+          final totalDur = scenes.fold(0.0, (acc, s) => acc + s.durationSeconds);
+          final narrationScript = scenes.map((s) => s.voiceOverNarration).where((n) => n.isNotEmpty).join(' ');
+
+          project = VideoProjectModel(
+            id: 'vimax_proj_${DateTime.now().millisecondsSinceEpoch}',
+            title: '$brandName Promotional Video',
+            templateType: _selectedTemplate,
+            aspectRatio: _selectedAspectRatio,
+            resolution: _selectedResolution,
+            totalDurationSeconds: totalDur > 0 ? totalDur : _targetDuration,
+            scenes: scenes,
+            audioNarrationScript: narrationScript.isNotEmpty ? narrationScript : '$brandName promotional video overview.',
+            captionStyle: _captionStyle,
+            transitionStyle: _transitionStyle,
+            backgroundMusicPath: _backgroundMusicPath,
+            backgroundMusicVolume: _bgmVolume,
+            enableVoiceNarration: _enableVoiceNarration,
+            appId: selectedApp?.id,
+            createdAt: DateTime.now(),
+          );
+        }
+      }
+
+      // Fallback to local planner if ViMax offline or plan returned null
+      if (project == null) {
+        final planner = ref.read(storyboardPlannerServiceProvider);
+        project = await planner.planStoryboard(input);
+      }
 
       // Protect against stale async response
       if (reqId != _storyboardRequestId || !mounted) return;
@@ -1532,9 +1887,44 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
     ref.read(currentVideoProjectProvider.notifier).state = project.copyWith(scenes: scenes);
   }
 
-  void _regenerateScene(int index) {
+  Future<void> _regenerateScene(int index) async {
     final project = ref.read(currentVideoProjectProvider);
     if (project == null) return;
+    final scene = project.scenes[index];
+    final vimaxService = ref.read(vimaxServiceProvider);
+    final status = await vimaxService.checkStatus();
+
+    if (status.isAvailable) {
+      final updated = await vimaxService.regenerateField(
+        scene: {
+          'id': scene.id,
+          'title': scene.sceneTitle,
+          'on_screen_text': scene.onScreenText,
+          'narration': scene.voiceOverNarration,
+          'subtitle': scene.subtitleText,
+          'visual_description': scene.visualDescription,
+          'visual_prompt': scene.visualDescription,
+          'duration': scene.durationSeconds,
+        },
+        fieldType: 'scene_only',
+        brandName: project.title,
+      );
+      if (updated != null && mounted) {
+        final newScene = scene.copyWith(
+          sceneTitle: updated['title']?.toString() ?? scene.sceneTitle,
+          onScreenText: updated['on_screen_text']?.toString() ?? scene.onScreenText,
+          voiceOverNarration: updated['narration']?.toString() ?? scene.voiceOverNarration,
+          subtitleText: updated['subtitle']?.toString() ?? scene.subtitleText,
+          visualDescription: updated['visual_description']?.toString() ?? scene.visualDescription,
+        );
+        final scenes = List<VideoSceneModel>.from(project.scenes);
+        scenes[index] = newScene;
+        _syncSceneControllers(newScene);
+        ref.read(currentVideoProjectProvider.notifier).state = project.copyWith(scenes: scenes);
+        return;
+      }
+    }
+
     final planner = ref.read(storyboardPlannerServiceProvider);
     final newScene = planner.regenerateScene(project: project, sceneIndex: index);
     final scenes = List<VideoSceneModel>.from(project.scenes);
@@ -1543,9 +1933,41 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
     ref.read(currentVideoProjectProvider.notifier).state = project.copyWith(scenes: scenes);
   }
 
-  void _regenerateVisualOnly(int index) {
+  Future<void> _regenerateVisualOnly(int index) async {
     final project = ref.read(currentVideoProjectProvider);
     if (project == null) return;
+    final scene = project.scenes[index];
+    final vimaxService = ref.read(vimaxServiceProvider);
+    final status = await vimaxService.checkStatus();
+
+    if (status.isAvailable) {
+      final updated = await vimaxService.regenerateField(
+        scene: {
+          'id': scene.id,
+          'title': scene.sceneTitle,
+          'on_screen_text': scene.onScreenText,
+          'narration': scene.voiceOverNarration,
+          'subtitle': scene.subtitleText,
+          'visual_description': scene.visualDescription,
+          'visual_prompt': scene.visualDescription,
+          'duration': scene.durationSeconds,
+        },
+        fieldType: 'visual_only',
+        brandName: project.title,
+      );
+      if (updated != null && mounted) {
+        final newScene = scene.copyWith(
+          visualDescription: updated['visual_description']?.toString() ?? scene.visualDescription,
+          imageAssetPath: updated['image_asset_path']?.toString() ?? scene.imageAssetPath,
+        );
+        final scenes = List<VideoSceneModel>.from(project.scenes);
+        scenes[index] = newScene;
+        _syncSceneControllers(newScene);
+        ref.read(currentVideoProjectProvider.notifier).state = project.copyWith(scenes: scenes);
+        return;
+      }
+    }
+
     final planner = ref.read(storyboardPlannerServiceProvider);
     final newScene = planner.regenerateVisualOnly(project: project, sceneIndex: index);
     final scenes = List<VideoSceneModel>.from(project.scenes);
@@ -1554,9 +1976,41 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
     ref.read(currentVideoProjectProvider.notifier).state = project.copyWith(scenes: scenes);
   }
 
-  void _regenerateNarrationOnly(int index) {
+  Future<void> _regenerateNarrationOnly(int index) async {
     final project = ref.read(currentVideoProjectProvider);
     if (project == null) return;
+    final scene = project.scenes[index];
+    final vimaxService = ref.read(vimaxServiceProvider);
+    final status = await vimaxService.checkStatus();
+
+    if (status.isAvailable) {
+      final updated = await vimaxService.regenerateField(
+        scene: {
+          'id': scene.id,
+          'title': scene.sceneTitle,
+          'on_screen_text': scene.onScreenText,
+          'narration': scene.voiceOverNarration,
+          'subtitle': scene.subtitleText,
+          'visual_description': scene.visualDescription,
+          'visual_prompt': scene.visualDescription,
+          'duration': scene.durationSeconds,
+        },
+        fieldType: 'narration_only',
+        brandName: project.title,
+      );
+      if (updated != null && mounted) {
+        final newScene = scene.copyWith(
+          voiceOverNarration: updated['narration']?.toString() ?? scene.voiceOverNarration,
+          subtitleText: updated['subtitle']?.toString() ?? scene.subtitleText,
+        );
+        final scenes = List<VideoSceneModel>.from(project.scenes);
+        scenes[index] = newScene;
+        _syncSceneControllers(newScene);
+        ref.read(currentVideoProjectProvider.notifier).state = project.copyWith(scenes: scenes);
+        return;
+      }
+    }
+
     final planner = ref.read(storyboardPlannerServiceProvider);
     final newScene = planner.regenerateNarrationOnly(project: project, sceneIndex: index);
     final scenes = List<VideoSceneModel>.from(project.scenes);
@@ -1565,9 +2019,41 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
     ref.read(currentVideoProjectProvider.notifier).state = project.copyWith(scenes: scenes);
   }
 
-  void _regenerateCaptionsOnly(int index) {
+  Future<void> _regenerateCaptionsOnly(int index) async {
     final project = ref.read(currentVideoProjectProvider);
     if (project == null) return;
+    final scene = project.scenes[index];
+    final vimaxService = ref.read(vimaxServiceProvider);
+    final status = await vimaxService.checkStatus();
+
+    if (status.isAvailable) {
+      final updated = await vimaxService.regenerateField(
+        scene: {
+          'id': scene.id,
+          'title': scene.sceneTitle,
+          'on_screen_text': scene.onScreenText,
+          'narration': scene.voiceOverNarration,
+          'subtitle': scene.subtitleText,
+          'visual_description': scene.visualDescription,
+          'visual_prompt': scene.visualDescription,
+          'duration': scene.durationSeconds,
+        },
+        fieldType: 'on_screen_text_only',
+        brandName: project.title,
+      );
+      if (updated != null && mounted) {
+        final newScene = scene.copyWith(
+          onScreenText: updated['on_screen_text']?.toString() ?? scene.onScreenText,
+          subtitleText: updated['subtitle']?.toString() ?? scene.subtitleText,
+        );
+        final scenes = List<VideoSceneModel>.from(project.scenes);
+        scenes[index] = newScene;
+        _syncSceneControllers(newScene);
+        ref.read(currentVideoProjectProvider.notifier).state = project.copyWith(scenes: scenes);
+        return;
+      }
+    }
+
     final planner = ref.read(storyboardPlannerServiceProvider);
     final newScene = planner.regenerateCaptionsOnly(project: project, sceneIndex: index);
     final scenes = List<VideoSceneModel>.from(project.scenes);
@@ -1733,6 +2219,200 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
         }
       }
     }
+  }
+
+  Future<void> _handleStartVimaxGenerationJob() async {
+    final project = ref.read(currentVideoProjectProvider);
+    if (project == null) return;
+
+    final vimaxService = ref.read(vimaxServiceProvider);
+    setState(() => _isSubmittingVimaxJob = true);
+
+    try {
+      final status = await vimaxService.checkStatus();
+      if (!status.isAvailable) {
+        final started = await vimaxService.ensureBackendRunning();
+        if (!started && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not connect to ViMax backend. Run backend/start_backend.bat to launch manually.')),
+          );
+          return;
+        }
+      }
+
+      final scenesPayload = project.scenes.map((s) => {
+        'id': s.id,
+        'title': s.sceneTitle,
+        'on_screen_text': s.onScreenText,
+        'narration': s.voiceOverNarration,
+        'subtitle': s.subtitleText,
+        'visual_description': s.visualDescription,
+        'visual_prompt': s.visualDescription,
+        'duration': s.durationSeconds,
+        'image_asset_path': s.imageAssetPath,
+        'video_clip_path': s.videoClipPath,
+      }).toList();
+
+      final jobId = await vimaxService.submitGenerationJob(
+        scenes: scenesPayload,
+        archetype: project.templateType,
+        aspectRatio: project.aspectRatio,
+        resolution: project.resolution,
+        brandColor: _extractedWebsiteMetadata?.brandColor ?? '#2563EB',
+        brandName: project.title,
+        description: _textPromptController.text.trim().isNotEmpty ? _textPromptController.text.trim() : null,
+        features: _extractedWebsiteMetadata?.features ?? [],
+        imagePaths: _selectedScreenshots,
+        videoClipPaths: _selectedClips,
+      );
+
+      if (jobId != null) {
+        _pollVimaxJob(jobId);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('✓ ViMax job queued: $jobId')),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to submit job to ViMax engine.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error launching ViMax job: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSubmittingVimaxJob = false);
+    }
+  }
+
+  void _pollVimaxJob(String jobId) {
+    _jobPollTimer?.cancel();
+    final vimaxService = ref.read(vimaxServiceProvider);
+
+    _jobPollTimer = Timer.periodic(const Duration(milliseconds: 1000), (timer) async {
+      final jobState = await vimaxService.pollJob(jobId);
+      if (jobState != null && mounted) {
+        ref.read(vimaxActiveJobProvider.notifier).state = jobState;
+
+        if (jobState.isCompleted) {
+          timer.cancel();
+          final project = ref.read(currentVideoProjectProvider);
+          if (project != null && jobState.mp4Path != null) {
+            final valid = jobState.validation;
+            final updated = project.copyWith(
+              exportStatus: 'rendered',
+              exportedFilePath: jobState.mp4Path,
+              fileSizeBytes: (valid?['size_bytes'] as num?)?.toInt() ?? 0,
+              renderingPhaseStatus: 'rendered',
+            );
+            ref.read(currentVideoProjectProvider.notifier).state = updated;
+            await ref.read(videoProjectsListProvider.notifier).saveProject(updated);
+
+            ref.read(videoExportStateProvider.notifier).state = VideoExportState(
+              isRendering: false,
+              progress: 1.0,
+              statusMessage: 'ViMax Render Complete',
+              result: VideoExportResult(
+                success: true,
+                mp4FilePath: jobState.mp4Path,
+                htmlPreviewPath: '',
+                renderingPhaseStatus: 'rendered',
+                exportDirectoryPath: File(jobState.mp4Path!).parent.path,
+                durationSeconds: (valid?['duration_seconds'] as num?)?.toDouble() ?? project.totalDurationSeconds,
+                videoWidth: valid?['width'] as int? ?? 1280,
+                videoHeight: valid?['height'] as int? ?? 720,
+                fileSizeBytes: (valid?['size_bytes'] as num?)?.toInt() ?? 0,
+              ),
+            );
+          }
+        } else if (jobState.isFailed || jobState.isCancelled) {
+          timer.cancel();
+          ref.read(videoExportStateProvider.notifier).state = VideoExportState(
+            isRendering: false,
+            progress: 0.0,
+            statusMessage: jobState.error ?? 'Job failed',
+            errorMessage: jobState.error,
+          );
+        }
+      }
+    });
+  }
+
+  Future<void> _handleCancelVimaxJob() async {
+    final activeJob = ref.read(vimaxActiveJobProvider);
+    if (activeJob == null || !activeJob.isRunning) return;
+    final vimaxService = ref.read(vimaxServiceProvider);
+    await vimaxService.cancelJob(activeJob.jobId);
+    _jobPollTimer?.cancel();
+    final updated = await vimaxService.pollJob(activeJob.jobId);
+    if (updated != null && mounted) {
+      ref.read(vimaxActiveJobProvider.notifier).state = updated;
+    }
+  }
+
+  void _showVimaxInfoDialog(BuildContext context, ViMaxStatus status) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              status.isAvailable ? Icons.auto_awesome : Icons.cloud_off,
+              color: status.isAvailable ? AppTheme.primaryIndigo : AppTheme.accentAmber,
+            ),
+            const SizedBox(width: 10),
+            Text(status.isAvailable ? 'ViMax AI Video Engine' : 'ViMax Engine Setup'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Framework: ${status.framework}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const SizedBox(height: 6),
+              Text('Status: ${status.status.toUpperCase()} (${status.dailyTarget})', style: const TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary)),
+              const SizedBox(height: 12),
+              const Text('Audio & Speech Synthesis:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              Text(status.speechSynthesis, style: const TextStyle(fontSize: 12, color: AppTheme.accentEmerald)),
+              const SizedBox(height: 10),
+              const Text('Language Model Provider:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              Text('Provider: ${status.llm['provider'] ?? 'local offline'} • Configured: ${status.llm['configured'] == true ? 'Yes' : 'Offline Agent Fallback'}', style: const TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary)),
+              const SizedBox(height: 10),
+              const Text('Image & Video Synthesis:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              const Text('Mode: Procedural Gradients, UI Frames & Motion Compositor (100% Free & Local)', style: TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary)),
+              const SizedBox(height: 10),
+              Text('Jobs Processed: ${status.jobsCount}', style: const TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary)),
+            ],
+          ),
+        ),
+        actions: [
+          if (!status.isAvailable)
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await ref.read(vimaxServiceProvider).ensureBackendRunning();
+                ref.invalidate(vimaxStatusProvider);
+              },
+              child: const Text('Start Backend (Auto)'),
+            ),
+          TextButton(
+            onPressed: () {
+              ref.invalidate(vimaxStatusProvider);
+              Navigator.pop(ctx);
+            },
+            child: const Text('Refresh'),
+          ),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
   }
 
   void _showFfmpegInfoDialog(BuildContext context, FfmpegStatus status) {

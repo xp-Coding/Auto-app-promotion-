@@ -52,5 +52,17 @@ app.*.map.json
 *.db-wal
 *.db-shm
 .env*
+!.env.example
+!backend/.env.example
 ffmpeg.exe
 *.mp4
+
+# ViMax backend temporary assets and caches
+backend/renders/
+backend/cache/
+backend/work/
+backend/jobs.json
+backend/vimax_repo/
+backend/__pycache__/
+__pycache__/
+*.pyc

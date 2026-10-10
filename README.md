@@ -81,15 +81,45 @@ Located under **Content Studio -> Video Template Studio**, this studio allows us
 * **App Domain Vector Iconography:** 9 specialized vector icons (Productivity, Gaming, Finance, Health, Social, Education, Entertainment, Tools, Shopping).
 * **Contextual Suggestion Engine:** Suggests optimal palettes, patterns, and icons based on app category and script semantics without fabricating fake app screenshots.
 
-### 4. AI & Cost Requirements: Zero Mandatory Subscriptions
-* **100% Free Local Template Engine (Default):** Runs completely offline without API keys or recurring costs.
+### 4. 🎬 ViMax Agentic AI Video Generation Engine Integration
+Integrated directly with the open-source **[HKUDS/ViMax](https://github.com/HKUDS/ViMax)** agentic video-generation framework, providing automated transformation from website URLs, product descriptions, screenshots, images, and scripts into promotional videos:
+* **Hybrid Agentic Architecture:** Flutter desktop frontend talks to a lightweight local Python REST API (`backend/app.py` on `127.0.0.1:8765`), orchestrating ViMax script/narrative planning, scene generation, speech synthesis, and FFmpeg encoding.
+* **Support for All Input Types:**
+  * *Public Website URLs:* Extracts website title, description, brand identity, key value propositions, logo, OpenGraph imagery, and page screenshots.
+  * *Uploaded Screenshots & Images:* 1:1, 9:16, and 16:9 aspect ratios preserved; never stretched or distorted.
+  * *Text Prompts & Descriptions:* Autonomously structured into high-converting storyboards.
+  * *Existing Scripts:* Preserved with 100% meaning and facts; optional agentic polishing without silent overrides.
+* **7 Supported Promotional Video Archetypes:**
+  1. `saas_product_ad`: SaaS Product Advertisement
+  2. `mobile_app_promo`: Mobile App Showcase
+  3. `website_promo`: Website & Web App Promo
+  4. `ecommerce_ad`: E-Commerce Product Advertisement
+  5. `startup_pitch`: Startup & Pitch Promotional Video
+  6. `feature_explainer`: Deep Feature Walkthrough & Explainer
+  7. `cinematic_ad`: Cinematic Brand Advertisement
+* **Asynchronous Background Job Manager (`ViMaxJobState`):**
+  * Real statuses: `queued` → `preparing_inputs` → `generating_video_clips` → `assembling_video` → `processing_audio` → `validating_output` → `completed` (or `failed` / `cancelled`).
+  * Live elapsed time, progress percentage, stage descriptions, and real-time streaming engine logs.
+* **Real MP4 Rendering & Stream Verification:**
+  * Genuine H.264 video and AAC audio encoding using Gyan.dev FFmpeg 7.1.
+  * Automatic FFprobe inspection validates stream presence, exact dimensions, codec, duration, and non-zero byte size before reporting success.
+* **Local Audio & Speech Synthesis:**
+  * Windows Native SAPI Speech Synthesizer + Microsoft Edge-TTS fallback.
+  * Procedural harmonic ambient chord audio synthesizer (pure Python `wave`/`struct` without external service limits).
+* **Quota-Safe Personal Production (5 Videos/Day):**
+  * Built for continuous personal promotional production at zero mandatory API cost.
+  * Local procedural graphics and hardware-accelerated motion compositing ensure 100% offline functionality.
+  * Optional external LLM/Image/Video providers (OpenAI, DeepSeek, Stability, Pika, Kling) can be configured in `backend/.env`.
+
+### 5. AI & Cost Requirements: Zero Mandatory Subscriptions
+* **100% Free Local Template & Procedural Engine (Default):** Runs completely offline without API keys or recurring costs.
 * **Optional BYO AI Providers:**
   * **Google Gemini API (`gemini-2.0-flash`):** Uses your own Google AI Studio API key.
   * **Local LLM via Ollama (`http://127.0.0.1:11434`):** Runs private models (e.g. `llama3`) on local hardware.
   * **OpenAI (`gpt-4o`):** Optional BYO API key support.
 * **Transparent Attribution:** Every generated post and campaign is tagged with its origin (`providerName`) in metadata.
 
-### 5. Official Publishing Integrations & Safety
+### 6. Official Publishing Integrations & Safety
 * **YouTube Data API v3:** Official OAuth 2.0 integration with automatic token refreshing, remote publication verification, and strict quota guardrails (10,000 units/day).
 * **Manual Export Packages:** Generates ready-to-publish packages (media, copy, tags) for networks requiring manual distribution without unofficial scraper bots.
 * **Idempotency Protection:** Prevents duplicate scheduling and accidental re-publishing using unique post hashes.
@@ -147,16 +177,20 @@ Auto-app-promotion/
 
 ### Build & Verification Commands
 ```powershell
-# 1. Fetch dependencies
+# 1. Fetch Flutter dependencies
 flutter pub get
 
-# 2. Run static analysis (verifies 0 errors & 0 warnings)
+# 2. Start local ViMax AI Video Engine (Background Python REST API)
+# Either double-click backend/start_backend.bat or run:
+py backend/app.py
+
+# 3. Run static analysis (verifies 0 errors & 0 warnings)
 flutter analyze
 
-# 3. Run automated test suite (67 passing tests)
+# 4. Run automated test suite (75 passing tests including ViMax suite)
 flutter test
 
-# 4. Launch desktop application
+# 5. Launch desktop application
 flutter run -d windows
 ```
 

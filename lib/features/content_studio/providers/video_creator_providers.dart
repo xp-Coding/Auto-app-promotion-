@@ -3,6 +3,7 @@ import '../../autopilot/domain/video_project_exporter.dart';
 import '../../autopilot/models/video_project_model.dart';
 import '../domain/ffmpeg_service.dart';
 import '../domain/storyboard_planner_service.dart';
+import '../domain/vimax_service.dart';
 import '../repositories/video_project_repository.dart';
 
 final videoProjectRepositoryProvider = Provider<VideoProjectRepository>((ref) {
@@ -100,3 +101,14 @@ final videoProjectsListProvider = StateNotifierProvider<VideoProjectsListNotifie
   final repo = ref.watch(videoProjectRepositoryProvider);
   return VideoProjectsListNotifier(repo);
 });
+
+final vimaxServiceProvider = Provider<ViMaxService>((ref) {
+  return ViMaxService();
+});
+
+final vimaxStatusProvider = FutureProvider<ViMaxStatus>((ref) async {
+  final service = ref.watch(vimaxServiceProvider);
+  return service.checkStatus();
+});
+
+final vimaxActiveJobProvider = StateProvider<ViMaxJobState?>((ref) => null);

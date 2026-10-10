@@ -59,6 +59,12 @@ jobs:
           if (Test-Path "sqlite3.dll") {
             Copy-Item -Path "sqlite3.dll" -Destination "$releaseDir/sqlite3.dll" -Force
           }
+
+          # Include ViMax backend service files in distribution
+          if (Test-Path "backend") {
+            New-Item -ItemType Directory -Path "$releaseDir/backend" -Force
+            Get-ChildItem -Path "backend" -File | Copy-Item -Destination "$releaseDir/backend" -Force
+          }
           
           # Create archive of the Release directory
           Compress-Archive -Path "$releaseDir/*" -DestinationPath "AppGrowthStudio-Windows-x64.zip" -Force
