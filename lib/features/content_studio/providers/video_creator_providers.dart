@@ -49,22 +49,6 @@ class VideoExportState {
     this.errorMessage,
     this.result,
   });
-
-  VideoExportState copyWith({
-    bool? isRendering,
-    double? progress,
-    String? statusMessage,
-    String? errorMessage,
-    VideoExportResult? result,
-  }) {
-    return VideoExportState(
-      isRendering: isRendering ?? this.isRendering,
-      progress: progress ?? this.progress,
-      statusMessage: statusMessage ?? this.statusMessage,
-      errorMessage: errorMessage,
-      result: result ?? this.result,
-    );
-  }
 }
 
 final videoExportStateProvider = StateProvider<VideoExportState>((ref) => const VideoExportState());
@@ -76,11 +60,11 @@ class VideoProjectsListNotifier extends StateNotifier<AsyncValue<List<VideoProje
     loadProjects();
   }
 
-  Future<void> loadProjects({String? appId}) async {
-    state = const AsyncValue.loading();
+  Future<void> loadProjects() async {
     try {
-      final projects = await _repository.getAllProjects(appId: appId);
-      state = AsyncValue.data(projects);
+      state = const AsyncValue.loading();
+      final list = await _repository.getAllProjects();
+      state = AsyncValue.data(list);
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
@@ -110,5 +94,18 @@ final vimaxStatusProvider = FutureProvider<ViMaxStatus>((ref) async {
   final service = ref.watch(vimaxServiceProvider);
   return service.checkStatus();
 });
+
+final wan2gpStatusProvider = FutureProvider<Wan2GPStatus>((ref) async {
+  final service = ref.watch(vimaxServiceProvider);
+  return service.getWan2GPStatus();
+});
+
+final diagnosticsProvider = FutureProvider<DiagnosticsReport?>((ref) async {
+  final service = ref.watch(vimaxServiceProvider);
+  return service.getDiagnostics();
+});
+
+/// Selectable AI video generation provider: 'vimax' or 'wan2gp'
+final selectedVideoProviderProvider = StateProvider<String>((ref) => 'vimax');
 
 final vimaxActiveJobProvider = StateProvider<ViMaxJobState?>((ref) => null);

@@ -103,6 +103,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
   Widget build(BuildContext context) {
     final ffmpegStatusAsync = ref.watch(ffmpegStatusProvider);
     final vimaxStatusAsync = ref.watch(vimaxStatusProvider);
+    final wan2gpStatusAsync = ref.watch(wan2gpStatusProvider);
     final currentProject = ref.watch(currentVideoProjectProvider);
     final exportState = ref.watch(videoExportStateProvider);
 
@@ -181,7 +182,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                vStatus.isAvailable ? 'ViMax AI Engine' : 'ViMax (Offline)',
+                                vStatus.isAvailable ? 'ViMax AI' : 'ViMax (Offline)',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold,
@@ -198,7 +199,59 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                     loading: () => const SizedBox.shrink(),
                     error: (_, _) => const SizedBox.shrink(),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
+
+                  // Wan2GP Engine Status Badge
+                  wan2gpStatusAsync.when(
+                    data: (wStatus) {
+                      final isReady = wStatus.isAvailable;
+                      final isHwIssue = wStatus.status == 'hardware_unsupported' || wStatus.status == 'insufficient_vram';
+                      return InkWell(
+                        onTap: () => _showWan2GPInfoDialog(context, wStatus),
+                        borderRadius: BorderRadius.circular(20),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: isReady
+                                ? Colors.teal.withOpacity(0.15)
+                                : (isHwIssue ? AppTheme.accentAmber.withOpacity(0.15) : Colors.grey.withOpacity(0.15)),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: isReady
+                                  ? Colors.teal.withOpacity(0.4)
+                                  : (isHwIssue ? AppTheme.accentAmber.withOpacity(0.4) : Colors.grey.withOpacity(0.4)),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isReady ? Icons.videocam_outlined : (isHwIssue ? Icons.memory : Icons.videocam_off_outlined),
+                                size: 14,
+                                color: isReady ? Colors.teal : (isHwIssue ? AppTheme.accentAmber : Colors.grey),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                isReady
+                                    ? 'Wan2GP Ready'
+                                    : (isHwIssue ? 'Wan2GP (GPU Req)' : 'Wan2GP (Setup)'),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: isReady ? Colors.teal : (isHwIssue ? AppTheme.accentAmber : Colors.grey),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Icon(Icons.info_outline, size: 12, color: AppTheme.darkTextSecondary),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    loading: () => const SizedBox.shrink(),
+                    error: (_, _) => const SizedBox.shrink(),
+                  ),
+                  const SizedBox(width: 8),
 
                   // FFmpeg Status Badge
                   ffmpegStatusAsync.when(
@@ -229,7 +282,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                status.isAvailable ? 'FFmpeg Ready' : 'FFmpeg Not Detected',
+                                status.isAvailable ? 'FFmpeg Ready' : 'FFmpeg Missing',
                                 style: TextStyle(
                                   fontSize: 12,
                                   fontWeight: FontWeight.bold,
@@ -245,6 +298,14 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                     },
                     loading: () => const SizedBox.shrink(),
                     error: (_, _) => const SizedBox.shrink(),
+                  ),
+                  const SizedBox(width: 8),
+
+                  // Diagnostics Quick Action
+                  IconButton(
+                    tooltip: 'System & Engine Diagnostics',
+                    icon: const Icon(Icons.troubleshoot, size: 20, color: AppTheme.primaryIndigo),
+                    onPressed: () => _showDiagnosticsDialog(context),
                   ),
                 ],
               ),
@@ -1178,6 +1239,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
     final project = ref.watch(currentVideoProjectProvider);
     final exportState = ref.watch(videoExportStateProvider);
     final vimaxJob = ref.watch(vimaxActiveJobProvider);
+    final selectedProvider = ref.watch(selectedVideoProviderProvider);
 
     if (project == null) {
       return const Center(child: Text('Please generate or select a video project first.'));
@@ -1222,12 +1284,14 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text(
-                              'ViMax AI Video Generation & Render Engine',
+                              'AI Video Generation & Render Engine',
                               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                             ),
-                            const Text(
-                              'Agentic pipeline: generative visuals, voiceover narration, ambient score, and FFmpeg assembly.',
-                              style: TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary),
+                            Text(
+                              selectedProvider == 'wan2gp'
+                                  ? 'Wan2GP local diffusion engine: generates visual clips from storyboard shots.'
+                                  : 'ViMax agentic pipeline: generative visuals, voiceover, ambient score, and FFmpeg assembly.',
+                              style: const TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary),
                             ),
                           ],
                         ),
@@ -1237,9 +1301,11 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                       icon: _isSubmittingVimaxJob || (vimaxJob != null && vimaxJob.isRunning)
                           ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                           : const Icon(Icons.play_arrow, size: 18),
-                      label: Text(vimaxJob != null && vimaxJob.isRunning ? 'Generating Video...' : 'Generate with ViMax AI'),
+                      label: Text(vimaxJob != null && vimaxJob.isRunning
+                          ? 'Generating Video...'
+                          : (selectedProvider == 'wan2gp' ? 'Generate with Wan2GP' : 'Generate with ViMax AI')),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primaryIndigo,
+                        backgroundColor: selectedProvider == 'wan2gp' ? Colors.teal : AppTheme.primaryIndigo,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
                       ),
@@ -1247,6 +1313,63 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
                     ),
                   ],
                 ),
+                const SizedBox(height: 12),
+
+                // Provider Selector Chips
+                Row(
+                  children: [
+                    const Text('Select Engine: ', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    ChoiceChip(
+                      label: const Text('ViMax Agentic Video'),
+                      selected: selectedProvider == 'vimax',
+                      onSelected: (val) {
+                        if (val) ref.read(selectedVideoProviderProvider.notifier).state = 'vimax';
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: const Text('Wan2GP Local Diffusion'),
+                      selected: selectedProvider == 'wan2gp',
+                      onSelected: (val) {
+                        if (val) ref.read(selectedVideoProviderProvider.notifier).state = 'wan2gp';
+                      },
+                    ),
+                  ],
+                ),
+
+                // Wan2GP Attribution & Hardware Notice
+                if (selectedProvider == 'wan2gp') ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.teal.withOpacity(0.3)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(Icons.verified, size: 14, color: Colors.teal),
+                            SizedBox(width: 6),
+                            Text(
+                              'Powered by Wan2GP (deepbeepmeep/Wan2GP) • Terms & Conditions apply',
+                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.teal),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Generates localized video clips from storyboard shot visual descriptions using local diffusion models (Wan 2.1 / LTX). Requires NVIDIA GPU with >=6GB VRAM.',
+                          style: TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
 
                 // Active ViMax Job Progress Card
                 if (vimaxJob != null) ...[
@@ -2253,7 +2376,9 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
         'video_clip_path': s.videoClipPath,
       }).toList();
 
+      final selectedProvider = ref.read(selectedVideoProviderProvider);
       final jobId = await vimaxService.submitGenerationJob(
+        provider: selectedProvider,
         scenes: scenesPayload,
         archetype: project.templateType,
         aspectRatio: project.aspectRatio,
@@ -2270,7 +2395,7 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
         _pollVimaxJob(jobId);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('✓ ViMax job queued: $jobId')),
+            SnackBar(content: Text('✓ ${selectedProvider.toUpperCase()} job queued: $jobId')),
           );
         }
       } else {
@@ -2450,4 +2575,180 @@ class _VideoCreatorStudioViewState extends ConsumerState<VideoCreatorStudioView>
       ),
     );
   }
+
+  void _showWan2GPInfoDialog(BuildContext context, Wan2GPStatus status) {
+    final hw = status.hardware;
+    final gpus = (hw['raw_controllers'] as List<dynamic>?) ?? [];
+    final gpuName = gpus.isNotEmpty ? gpus[0]['name'] : 'Unknown Graphics';
+    final vramGb = gpus.isNotEmpty ? gpus[0]['vram_gb'] : 0.0;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.videocam_outlined, color: Colors.teal),
+            SizedBox(width: 10),
+            Text('Wan2GP Local AI Video Diffusion'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.teal.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.teal.withOpacity(0.3)),
+                ),
+                child: Text(
+                  status.attribution,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.teal),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('Hardware Detection & CUDA Suitability:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              const SizedBox(height: 4),
+              Text('GPU: $gpuName', style: const TextStyle(fontSize: 12)),
+              Text('Detected VRAM: $vramGb GB (CUDA Available: ${hw['has_cuda'] == true ? 'Yes' : 'No'})', style: const TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary)),
+              const SizedBox(height: 10),
+              const Text('Hardware Status Assessment:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: status.isAvailable
+                      ? AppTheme.accentEmerald.withOpacity(0.12)
+                      : AppTheme.accentAmber.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  status.message,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: status.isAvailable ? AppTheme.accentEmerald : AppTheme.accentAmber,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('Supported Local Models & Min Requirements:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              const SizedBox(height: 4),
+              const Text('• Wan 2.1 T2V 1.3B: Fast text-to-video (Min 6GB VRAM CUDA)', style: TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary)),
+              const Text('• Wan 2.1 I2V 14B: High-res image-to-video (Min 14GB VRAM CUDA)', style: TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary)),
+              const Text('• LTX-Video 2.0: Distilled 8-step video (Min 8GB VRAM CUDA)', style: TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary)),
+              const SizedBox(height: 12),
+              const Text('Official Repository & Documentation:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              const SelectableText('https://github.com/deepbeepmeep/Wan2GP', style: TextStyle(fontSize: 11, color: AppTheme.primaryIndigo)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              ref.invalidate(wan2gpStatusProvider);
+              Navigator.pop(ctx);
+            },
+            child: const Text('Refresh'),
+          ),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  void _showDiagnosticsDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Consumer(
+        builder: (context, ref, _) {
+          final diagAsync = ref.watch(diagnosticsProvider);
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.troubleshoot, color: AppTheme.primaryIndigo),
+                SizedBox(width: 10),
+                Text('System & AI Engine Diagnostics'),
+              ],
+            ),
+            content: SizedBox(
+              width: 540,
+              child: diagAsync.when(
+                data: (diag) {
+                  if (diag == null) {
+                    return const Text('Diagnostics returned no data. Ensure backend is running.');
+                  }
+                  final py = diag.executables['python'] as Map<String, dynamic>? ?? {};
+                  final ffmpeg = diag.executables['ffmpeg'] as Map<String, dynamic>? ?? {};
+                  final hw = diag.hardware;
+                  final gpus = (hw['raw_controllers'] as List<dynamic>?) ?? [];
+                  final gpuName = gpus.isNotEmpty ? gpus[0]['name'] : 'Unknown Graphics';
+
+                  return SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              diag.isReady ? Icons.check_circle : Icons.warning_amber,
+                              color: diag.isReady ? AppTheme.accentEmerald : AppTheme.accentAmber,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Overall System Health: ${diag.overallStatus.toUpperCase()}',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: diag.isReady ? AppTheme.accentEmerald : AppTheme.accentAmber,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Divider(height: 20),
+                        const Text('Executables & Runtime:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        Text('• Python: ${py['path'] ?? 'Not found'} (${py['version'] ?? ''})', style: const TextStyle(fontSize: 11)),
+                        Text('• FFmpeg: ${ffmpeg['path'] ?? 'Not found'}', style: const TextStyle(fontSize: 11)),
+                        const SizedBox(height: 10),
+                        const Text('Hardware & GPU Acceleration:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        Text('• GPU: $gpuName', style: const TextStyle(fontSize: 11)),
+                        Text('• CUDA Available: ${hw['has_cuda'] == true ? 'Yes' : 'No (Local motion graphics fallback active)'}', style: const TextStyle(fontSize: 11)),
+                        const SizedBox(height: 10),
+                        const Text('ViMax Engine Status:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        Text('• Repo Found: ${diag.vimaxInstallation['exists'] == true ? 'Yes' : 'No'}', style: const TextStyle(fontSize: 11)),
+                        Text('• Script2Video Pipeline: ${diag.vimaxInstallation['has_script2video'] == true ? 'Ready' : 'Missing'}', style: const TextStyle(fontSize: 11)),
+                        const SizedBox(height: 10),
+                        const Text('Wan2GP Local Diffusion Status:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        Text('• Status: ${diag.wan2gpStatus.status.toUpperCase()}', style: const TextStyle(fontSize: 11)),
+                        Text('• Guidance: ${diag.wan2gpStatus.message}', style: const TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary)),
+                        const SizedBox(height: 10),
+                        const Text('Storage & Write Permissions:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                        ...diag.fileSystemPermissions.entries.map((e) {
+                          final v = e.value as Map<String, dynamic>;
+                          return Text('• ${e.key}: ${v['writable'] == true ? 'Writable' : 'Error'} (${v['path']})', style: const TextStyle(fontSize: 11));
+                        }),
+                      ],
+                    ),
+                  );
+                },
+                loading: () => const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator())),
+                error: (e, _) => Text('Diagnostics Error: $e'),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => ref.invalidate(diagnosticsProvider),
+                child: const Text('Re-run Checks'),
+              ),
+              ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
+

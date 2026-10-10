@@ -51,6 +51,7 @@ class AppsListNotifier extends StateNotifier<AsyncValue<List<AppModel>>> {
         searchQuery: filter.searchQuery,
         category: filter.selectedCategory == 'All' ? null : filter.selectedCategory,
       );
+      if (!mounted) return;
       state = AsyncValue.data(apps);
 
       // If no app selected or selected app is archived/removed, select first active app
@@ -59,6 +60,7 @@ class AppsListNotifier extends StateNotifier<AsyncValue<List<AppModel>>> {
         _ref.read(selectedAppProvider.notifier).state = apps.first;
       }
     } catch (e, st) {
+      if (!mounted) return;
       state = AsyncValue.error(e, st);
     }
   }

@@ -233,4 +233,100 @@ void main() {
       expect(reorderedProject.scenes[1].sceneTitle, 'Hook');
     });
   });
+
+  group('Wan2GPStatus Tests', () {
+    test('parses Wan2GP status json correctly', () {
+      final json = {
+        'is_available': false,
+        'provider': 'wan2gp',
+        'status': 'hardware_unsupported',
+        'message': 'Unsupported Hardware: Wan2GP requires an NVIDIA GPU with CUDA support and >= 6GB VRAM.',
+        'attribution': 'Powered by Wan2GP (deepbeepmeep/Wan2GP). Subject to Wan2GP Terms and Conditions.',
+        'details': {
+          'hardware': {
+            'has_cuda': false,
+            'gpu_count': 1,
+            'total_vram_gb': 0.0,
+            'raw_controllers': [
+              {'name': 'Intel(R) HD Graphics 520', 'vram_gb': 1.0, 'driver': '24.20.100.6299', 'type': 'Intel Integrated'}
+            ]
+          },
+          'install_dir': 'd:/Ai promo/backend/wan2gp_repo',
+          'is_installed': false,
+          'selected_model': 'wan2.1_t2v_1.3B',
+          'selected_model_info': {
+            'name': 'Wan 2.1 T2V 1.3B (Low VRAM Fast)',
+            'modes': ['t2v'],
+            'min_vram_gb': 6.0,
+          },
+        },
+      };
+
+      final status = Wan2GPStatus.fromJson(json);
+
+      expect(status.isAvailable, isFalse);
+      expect(status.provider, 'wan2gp');
+      expect(status.status, 'hardware_unsupported');
+      expect(status.attribution, contains('Powered by Wan2GP'));
+      expect(status.selectedModel, 'wan2.1_t2v_1.3B');
+      expect(status.isInstalled, isFalse);
+      expect(status.hardware['has_cuda'], isFalse);
+    });
+
+    test('creates offline Wan2GP status', () {
+      final status = Wan2GPStatus.offline();
+      expect(status.isAvailable, isFalse);
+      expect(status.status, 'offline');
+      expect(status.attribution, contains('deepbeepmeep/Wan2GP'));
+    });
+  });
+
+  group('DiagnosticsReport Tests', () {
+    test('parses full system diagnostics report json correctly', () {
+      final json = {
+        'is_ready': true,
+        'overall_status': 'healthy',
+        'vimax_installation': {
+          'repo_path': 'd:/Ai promo/backend/vimax_repo',
+          'exists': true,
+          'has_script2video': true,
+          'has_agent_runtime': true,
+        },
+        'executables': {
+          'python': {'path': 'C:/Python314/python.exe', 'version': 'Python 3.14.8', 'valid': true},
+          'ffmpeg': {'path': 'd:/Ai promo/ffmpeg.exe', 'version': 'ffmpeg 7.1', 'valid': true},
+        },
+        'dependencies': {
+          'PIL': {'installed': true, 'version': '11.3.0'},
+          'moviepy': {'installed': true, 'version': '2.1.2'},
+          'numpy': {'installed': true, 'version': '2.5.3'},
+        },
+        'file_system_permissions': {
+          'renders': {'path': 'd:/Ai promo/backend/renders', 'writable': true},
+          'cache': {'path': 'd:/Ai promo/backend/cache', 'writable': true},
+        },
+        'hardware': {
+          'has_cuda': false,
+          'total_vram_gb': 0.0,
+        },
+        'wan2gp_health': {
+          'is_available': false,
+          'provider': 'wan2gp',
+          'status': 'hardware_unsupported',
+          'message': 'NVIDIA GPU required',
+          'attribution': 'Powered by Wan2GP (deepbeepmeep/Wan2GP)',
+          'details': {},
+        },
+      };
+
+      final diag = DiagnosticsReport.fromJson(json);
+
+      expect(diag.isReady, isTrue);
+      expect(diag.overallStatus, 'healthy');
+      expect(diag.vimaxInstallation['exists'], isTrue);
+      expect(diag.executables['ffmpeg']['valid'], isTrue);
+      expect(diag.dependencies['PIL']['installed'], isTrue);
+      expect(diag.wan2gpStatus.status, 'hardware_unsupported');
+    });
+  });
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 /// Status model for the ViMax Python AI Video Engine.
 class ViMaxStatus {
@@ -54,6 +55,102 @@ class ViMaxStatus {
       videoGeneration: json['video_generation'] as Map<String, dynamic>? ?? {},
       dailyTarget: json['daily_target'] as String? ?? '5 videos/day',
       jobsCount: json['jobs_count'] as int? ?? 0,
+    );
+  }
+}
+
+/// Wan2GP Status model.
+class Wan2GPStatus {
+  final bool isAvailable;
+  final String provider;
+  final String status; // ready, hardware_unsupported, insufficient_vram, not_installed
+  final String message;
+  final String attribution;
+  final Map<String, dynamic> hardware;
+  final String? selectedModel;
+  final Map<String, dynamic>? modelInfo;
+  final String? installDir;
+  final bool isInstalled;
+
+  const Wan2GPStatus({
+    required this.isAvailable,
+    required this.provider,
+    required this.status,
+    required this.message,
+    required this.attribution,
+    this.hardware = const {},
+    this.selectedModel,
+    this.modelInfo,
+    this.installDir,
+    this.isInstalled = false,
+  });
+
+  factory Wan2GPStatus.fromJson(Map<String, dynamic> json) {
+    final rawDetails = json['details'];
+    final details = rawDetails is Map ? Map<String, dynamic>.from(rawDetails) : <String, dynamic>{};
+    final rawHw = details['hardware'];
+    final hardware = rawHw is Map ? Map<String, dynamic>.from(rawHw) : <String, dynamic>{};
+    final rawModelInfo = details['selected_model_info'];
+    final modelInfo = rawModelInfo is Map ? Map<String, dynamic>.from(rawModelInfo) : null;
+    return Wan2GPStatus(
+      isAvailable: json['is_available'] as bool? ?? false,
+      provider: json['provider'] as String? ?? 'wan2gp',
+      status: json['status'] as String? ?? 'unknown',
+      message: json['message'] as String? ?? '',
+      attribution: json['attribution'] as String? ?? 'Powered by Wan2GP (deepbeepmeep/Wan2GP)',
+      hardware: hardware,
+      selectedModel: details['selected_model'] as String?,
+      modelInfo: modelInfo,
+      installDir: details['install_dir'] as String?,
+      isInstalled: details['is_installed'] as bool? ?? false,
+    );
+  }
+
+  factory Wan2GPStatus.offline() {
+    return const Wan2GPStatus(
+      isAvailable: false,
+      provider: 'wan2gp',
+      status: 'offline',
+      message: 'Backend service offline',
+      attribution: 'Powered by Wan2GP (deepbeepmeep/Wan2GP)',
+    );
+  }
+}
+
+/// Diagnostics report model.
+class DiagnosticsReport {
+  final bool isReady;
+  final String overallStatus;
+  final Map<String, dynamic> vimaxInstallation;
+  final Map<String, dynamic> executables;
+  final Map<String, dynamic> dependencies;
+  final Map<String, dynamic> fileSystemPermissions;
+  final Map<String, dynamic> hardware;
+  final Wan2GPStatus wan2gpStatus;
+
+  const DiagnosticsReport({
+    required this.isReady,
+    required this.overallStatus,
+    required this.vimaxInstallation,
+    required this.executables,
+    required this.dependencies,
+    required this.fileSystemPermissions,
+    required this.hardware,
+    required this.wan2gpStatus,
+  });
+
+  factory DiagnosticsReport.fromJson(Map<String, dynamic> json) {
+    return DiagnosticsReport(
+      isReady: json['is_ready'] as bool? ?? false,
+      overallStatus: json['overall_status'] as String? ?? 'unknown',
+      vimaxInstallation: json['vimax_installation'] is Map ? Map<String, dynamic>.from(json['vimax_installation'] as Map) : {},
+      executables: json['executables'] is Map ? Map<String, dynamic>.from(json['executables'] as Map) : {},
+      dependencies: json['dependencies'] is Map ? Map<String, dynamic>.from(json['dependencies'] as Map) : {},
+      fileSystemPermissions: json['file_system_permissions'] is Map ? Map<String, dynamic>.from(json['file_system_permissions'] as Map) : {},
+      hardware: json['hardware'] is Map ? Map<String, dynamic>.from(json['hardware'] as Map) : {},
+      wan2gpStatus: json['wan2gp_health'] is Map
+          ? Wan2GPStatus.fromJson(Map<String, dynamic>.from(json['wan2gp_health'] as Map))
+          : Wan2GPStatus.offline(),
     );
   }
 }
@@ -112,10 +209,11 @@ class WebsiteExtractedMetadata {
 /// Background job progress details.
 class ViMaxJobState {
   final String jobId;
-  final String status; // queued, preparing_inputs, generating_storyboard, generating_video_clips, assembling_video, validating_output, completed, failed, cancelled
+  final String provider;
+  final String status;
   final String stage;
   final String stageMessage;
-  final double progress; // 0.0 to 1.0
+  final double progress;
   final double elapsedSeconds;
   final String? mp4Path;
   final Map<String, dynamic>? validation;
@@ -124,6 +222,7 @@ class ViMaxJobState {
 
   const ViMaxJobState({
     required this.jobId,
+    this.provider = 'vimax',
     required this.status,
     required this.stage,
     required this.stageMessage,
@@ -143,6 +242,7 @@ class ViMaxJobState {
   factory ViMaxJobState.fromJson(Map<String, dynamic> json) {
     return ViMaxJobState(
       jobId: json['job_id'] as String? ?? '',
+      provider: json['provider'] as String? ?? 'vimax',
       status: json['status'] as String? ?? 'queued',
       stage: json['stage'] as String? ?? 'queued',
       stageMessage: json['stage_message'] as String? ?? '',
@@ -156,7 +256,7 @@ class ViMaxJobState {
   }
 }
 
-/// Client service connecting AppGrowth Studio with the local ViMax Python API.
+/// Client service connecting AppGrowth Studio with the local ViMax & Wan2GP Python API.
 class ViMaxService {
   final String baseUrl;
   final HttpClient _client = HttpClient();
@@ -180,7 +280,50 @@ class ViMaxService {
     }
   }
 
-  /// Automatically launches the local Python backend process if it is not currently running.
+  /// Retrieves comprehensive backend diagnostics.
+  Future<DiagnosticsReport?> getDiagnostics() async {
+    try {
+      final request = await _client.getUrl(Uri.parse('$baseUrl/api/diagnostics')).timeout(const Duration(seconds: 5));
+      final response = await request.close().timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) {
+        final body = await response.transform(utf8.decoder).join();
+        final jsonMap = jsonDecode(body) as Map<String, dynamic>;
+        return DiagnosticsReport.fromJson(jsonMap);
+      }
+    } catch (e) {
+      debugPrint('[ViMax] Diagnostics error: $e');
+    }
+    return null;
+  }
+
+  /// Retrieves Wan2GP status, hardware detection, and model info.
+  Future<Wan2GPStatus> getWan2GPStatus() async {
+    try {
+      final request = await _client.getUrl(Uri.parse('$baseUrl/api/wan2gp/status')).timeout(const Duration(seconds: 3));
+      final response = await request.close().timeout(const Duration(seconds: 3));
+      if (response.statusCode == 200) {
+        final body = await response.transform(utf8.decoder).join();
+        final jsonMap = jsonDecode(body) as Map<String, dynamic>;
+        return Wan2GPStatus.fromJson(jsonMap);
+      }
+    } catch (_) {}
+    return Wan2GPStatus.offline();
+  }
+
+  /// Saves Wan2GP settings.
+  Future<bool> saveWan2GPConfig(Map<String, dynamic> config) async {
+    try {
+      final request = await _client.postUrl(Uri.parse('$baseUrl/api/wan2gp/config')).timeout(const Duration(seconds: 5));
+      request.headers.contentType = ContentType.json;
+      request.write(jsonEncode(config));
+      final response = await request.close().timeout(const Duration(seconds: 5));
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Automatically launches the local Python backend process with robust path resolution.
   Future<bool> ensureBackendRunning() async {
     final status = await checkStatus();
     if (status.isAvailable) {
@@ -188,22 +331,66 @@ class ViMaxService {
     }
 
     try {
-      final pyExe = 'py';
-      final appPath = 'backend/app.py';
-      if (!File(appPath).existsSync()) {
-        debugPrint('[ViMax] backend/app.py not found in current working directory');
+      // Find workspace root and app.py
+      final rootCandidates = [
+        Directory.current.path,
+        r'd:\Ai promo',
+        p.dirname(Platform.resolvedExecutable),
+      ];
+
+      String? appScriptPath;
+      String? workingDir;
+
+      for (final root in rootCandidates) {
+        final candidate = p.join(root, 'backend', 'app.py');
+        if (File(candidate).existsSync()) {
+          appScriptPath = candidate;
+          workingDir = root;
+          break;
+        }
+      }
+
+      if (appScriptPath == null) {
+        debugPrint('[ViMax] backend/app.py not found in any search path');
         return false;
       }
 
-      debugPrint('[ViMax] Launching background ViMax service...');
+      // Search for working Python interpreter
+      final localAppData = Platform.environment['LOCALAPPDATA'] ?? '';
+      final pyCandidates = <String>[
+        'py',
+        if (localAppData.isNotEmpty) p.join(localAppData, 'Programs', 'Python', 'Python314', 'python.exe'),
+        if (localAppData.isNotEmpty) p.join(localAppData, 'Programs', 'Python', 'Launcher', 'py.exe'),
+        'python',
+        r'C:\Python314\python.exe',
+      ];
+
+      String? chosenPython;
+      for (final cand in pyCandidates) {
+        if (cand == 'py' || cand == 'python') {
+          chosenPython = cand;
+          break;
+        } else if (File(cand).existsSync()) {
+          chosenPython = cand;
+          break;
+        }
+      }
+
+      if (chosenPython == null) {
+        debugPrint('[ViMax] No suitable Python executable candidate found');
+        return false;
+      }
+
+      debugPrint('[ViMax] Launching background ViMax service using $chosenPython in $workingDir...');
       _backendProcess = await Process.start(
-        pyExe,
-        [appPath],
+        chosenPython,
+        [appScriptPath],
+        workingDirectory: workingDir,
         mode: ProcessStartMode.detached,
       );
 
-      // Poll up to 6 seconds for server readiness
-      for (int i = 0; i < 12; i++) {
+      // Poll up to 8 seconds for server readiness
+      for (int i = 0; i < 16; i++) {
         await Future.delayed(const Duration(milliseconds: 500));
         final check = await checkStatus();
         if (check.isAvailable) {
@@ -292,7 +479,7 @@ class ViMaxService {
   /// Granular scene field regeneration.
   Future<Map<String, dynamic>?> regenerateField({
     required Map<String, dynamic> scene,
-    required String fieldType, // visual_only, narration_only, on_screen_text_only, scene_only
+    required String fieldType,
     String? brandName,
     String? brandColor,
   }) async {
@@ -310,7 +497,7 @@ class ViMaxService {
       if (response.statusCode == 200) {
         final body = await response.transform(utf8.decoder).join();
         final jsonMap = jsonDecode(body) as Map<String, dynamic>;
-        return jsonMap['scene'] as Map<String, dynamic>?;
+        return jsonMap['scene'] as Map<String, dynamic>? ?? {};
       }
     } catch (e) {
       debugPrint('[ViMax] Field regeneration error: $e');
@@ -318,13 +505,14 @@ class ViMaxService {
     return null;
   }
 
-  /// Submits an asynchronous video generation background job.
+  /// Submits an asynchronous video generation background job with provider selection.
   Future<String?> submitGenerationJob({
     required List<Map<String, dynamic>> scenes,
     required String archetype,
     required String aspectRatio,
     required String resolution,
     required String brandColor,
+    String provider = 'vimax', // 'vimax' or 'wan2gp'
     String? brandName,
     String? description,
     List<String>? features,
@@ -336,6 +524,7 @@ class ViMaxService {
       final request = await _client.postUrl(Uri.parse('$baseUrl/api/video/generate')).timeout(const Duration(seconds: 15));
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode({
+        'provider': provider,
         'scenes': scenes,
         'archetype': archetype,
         'aspect_ratio': aspectRatio,

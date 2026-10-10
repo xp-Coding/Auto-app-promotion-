@@ -15,11 +15,17 @@ import wave
 from pathlib import Path
 from typing import Optional
 
+from backend.executable_resolver import get_workspace_root, resolve_ffmpeg_path
+
 
 class AudioSynthesizer:
-    def __init__(self, ffmpeg_path: str = "ffmpeg.exe", cache_dir: str = "backend/cache/audio"):
-        self.ffmpeg_path = os.path.abspath(ffmpeg_path) if os.path.exists(ffmpeg_path) else "ffmpeg"
-        self.cache_dir = os.path.abspath(cache_dir)
+    def __init__(self, ffmpeg_path: Optional[str] = None, cache_dir: Optional[str] = None):
+        root = get_workspace_root()
+        resolved_ffmpeg, _ = resolve_ffmpeg_path(ffmpeg_path)
+        self.ffmpeg_path = resolved_ffmpeg or (os.path.join(root, "ffmpeg.exe") if os.path.exists(os.path.join(root, "ffmpeg.exe")) else "ffmpeg")
+        
+        default_cache = os.path.join(root, "backend", "cache", "audio")
+        self.cache_dir = os.path.abspath(cache_dir or default_cache)
         os.makedirs(self.cache_dir, exist_ok=True)
 
     def synthesize_speech(
@@ -47,8 +53,7 @@ class AudioSynthesizer:
             duration = self.get_audio_duration(out_path)
             if duration > 0:
                 return duration
-        except Exception as e:
-            # SAPI failed, try edge_tts if available
+        except Exception:
             pass
 
         # 2. Try Edge TTS
@@ -75,7 +80,6 @@ class AudioSynthesizer:
         rate: int = 0,
     ) -> None:
         """Generates speech via Windows System.Speech.Synthesis."""
-        # Sanitize text for powershell single quotes
         safe_text = text.replace("'", "''").replace("\r", " ").replace("\n", " ")
         ps_script = (
             "Add-Type -AssemblyName System.Speech; "
@@ -133,21 +137,21 @@ class AudioSynthesizer:
                 pass
 
         # Try FFprobe / FFmpeg
-        try:
-            cmd = [
-                self.ffmpeg_path,
-                "-i", audio_path,
-            ]
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            # FFmpeg outputs duration to stderr like "Duration: 00:00:04.52,"
-            match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", res.stderr)
-            if match:
-                hours = float(match.group(1))
-                minutes = float(match.group(2))
-                seconds = float(match.group(3))
-                return hours * 3600 + minutes * 60 + seconds
-        except Exception:
-            pass
+        if self.ffmpeg_path and os.path.exists(self.ffmpeg_path):
+            try:
+                cmd = [
+                    self.ffmpeg_path,
+                    "-i", audio_path,
+                ]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", res.stderr)
+                if match:
+                    hours = float(match.group(1))
+                    minutes = float(match.group(2))
+                    seconds = float(match.group(3))
+                    return hours * 3600 + minutes * 60 + seconds
+            except Exception:
+                pass
 
         return 3.0
 
@@ -172,9 +176,7 @@ class AudioSynthesizer:
             frames = bytearray()
             for i in range(num_frames):
                 t = i / float(sample_rate)
-                # Subtle envelope fade in / out
                 fade = min(1.0, t / 1.0) * min(1.0, max(0.0, (dur - t) / 1.5))
-                # Ambient chord: 220Hz (A3), 277Hz (C#4), 330Hz (E4), 440Hz (A4)
                 sample = (
                     0.05 * math.sin(2 * math.pi * 220.0 * t) +
                     0.04 * math.sin(2 * math.pi * 277.18 * t) +

@@ -1,29 +1,48 @@
 """
-FFmpeg Video Assembly and MP4 Verification Engine for AppGrowth Studio + ViMax.
+FFmpeg Video Assembly and MP4 Verification Engine for AppGrowth Studio.
 Renders high-resolution video frames, mixes narration and music,
 handles aspect ratios without distortion, and verifies real playable output.
+Robustly resolves FFmpeg paths and prevents WinError 2 issues.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
 from backend.audio_synthesizer import AudioSynthesizer
+from backend.executable_resolver import get_workspace_root, resolve_ffmpeg_path
+
+logger = logging.getLogger(__name__)
 
 
 class VideoRenderer:
-    def __init__(self, ffmpeg_path: str = "ffmpeg.exe", temp_dir: str = "backend/renders/temp"):
-        self.ffmpeg_path = os.path.abspath(ffmpeg_path) if os.path.exists(ffmpeg_path) else "ffmpeg"
-        self.temp_dir = os.path.abspath(temp_dir)
+    def __init__(self, ffmpeg_path: Optional[str] = None, temp_dir: Optional[str] = None):
+        root = get_workspace_root()
+        resolved_ffmpeg, _ = resolve_ffmpeg_path(ffmpeg_path)
+        self.ffmpeg_path = resolved_ffmpeg or (os.path.join(root, "ffmpeg.exe") if os.path.exists(os.path.join(root, "ffmpeg.exe")) else "ffmpeg")
+        
+        default_temp = os.path.join(root, "backend", "renders", "temp")
+        self.temp_dir = os.path.abspath(temp_dir or default_temp)
         os.makedirs(self.temp_dir, exist_ok=True)
         self.audio_synth = AudioSynthesizer(ffmpeg_path=self.ffmpeg_path)
+
+    def is_ffmpeg_ready(self) -> bool:
+        """Returns True if the FFmpeg executable is resolved and executable."""
+        if not self.ffmpeg_path or not os.path.isfile(self.ffmpeg_path):
+            return False
+        try:
+            res = subprocess.run([self.ffmpeg_path, "-version"], capture_output=True, text=True, timeout=5)
+            return res.returncode == 0
+        except Exception:
+            return False
 
     def get_resolution_dimensions(self, aspect_ratio: str, resolution: str) -> Tuple[int, int]:
         """Calculates exact width and height for target aspect ratio and resolution."""
@@ -44,12 +63,20 @@ class VideoRenderer:
         aspect_ratio: str = "9:16",
         resolution: str = "1080p",
         brand_color: str = "#2563EB",
-        output_dir: str = "backend/renders",
-        progress_callback: Optional[callable] = None,
+        output_dir: Optional[str] = None,
+        progress_callback: Optional[Callable[[str, str, float], None]] = None,
     ) -> Dict[str, Any]:
         """
         Renders the complete video project to a verified playable MP4.
+        Ensures strict validation and reliable path resolution.
         """
+        root = get_workspace_root()
+        if not self.is_ffmpeg_ready():
+            raise FileNotFoundError(
+                f"FFmpeg binary not found or not executable at '{self.ffmpeg_path}'. "
+                f"Please ensure ffmpeg.exe exists in '{root}' or is installed in PATH."
+            )
+
         width, height = self.get_resolution_dimensions(aspect_ratio, resolution)
         work_dir = os.path.join(self.temp_dir, f"job_{project_id}")
         os.makedirs(work_dir, exist_ok=True)
@@ -57,9 +84,10 @@ class VideoRenderer:
         os.makedirs(frames_dir, exist_ok=True)
         audio_dir = os.path.join(work_dir, "audio")
         os.makedirs(audio_dir, exist_ok=True)
-        final_dir = os.path.abspath(output_dir)
-        os.makedirs(final_dir, exist_ok=True)
-        final_mp4_path = os.path.join(final_dir, f"{project_id}_rendered.mp4")
+
+        final_out_dir = os.path.abspath(output_dir or os.path.join(root, "backend", "renders"))
+        os.makedirs(final_out_dir, exist_ok=True)
+        final_mp4_path = os.path.join(final_out_dir, f"{project_id}_rendered.mp4")
 
         scene_clip_paths: List[str] = []
         total_scenes = len(scenes)
@@ -70,8 +98,8 @@ class VideoRenderer:
         # 1. Process each scene
         for idx, scene in enumerate(scenes):
             scene_num = idx + 1
-            scene_dur = float(scene.get("duration_seconds", 3.5))
-            narration = scene.get("voice_over_narration", "")
+            scene_dur = float(scene.get("duration_seconds") or scene.get("duration") or 3.5)
+            narration = scene.get("voice_over_narration") or scene.get("narration") or ""
 
             # A. Generate Narration Audio for Scene
             scene_audio_path = os.path.join(audio_dir, f"scene_{scene_num}.wav")
@@ -79,7 +107,9 @@ class VideoRenderer:
             if narration and narration.strip():
                 try:
                     audio_duration = self.audio_synth.synthesize_speech(narration, scene_audio_path)
-                except Exception:
+                except Exception as e:
+                    logger.warning("Narration synthesis failed for scene %d, using fallback: %s", scene_num, e)
+                    self.audio_synth._create_silent_audio(scene_audio_path, scene_dur)
                     audio_duration = scene_dur
             else:
                 self.audio_synth._create_silent_audio(scene_audio_path, scene_dur)
@@ -100,7 +130,11 @@ class VideoRenderer:
 
             # C. Check if Scene has an existing video clip
             user_clips = scene.get("visual_asset_paths", [])
-            video_asset = next((p for p in user_clips if p and p.lower().endswith((".mp4", ".mov", ".avi")) and os.path.exists(p)), None)
+            clip_from_field = scene.get("video_clip_path")
+            if clip_from_field and clip_from_field not in user_clips:
+                user_clips = [clip_from_field] + user_clips
+
+            video_asset = next((p for p in user_clips if p and p.lower().endswith((".mp4", ".mov", ".avi", ".mkv")) and os.path.isfile(p)), None)
 
             # D. Compile Scene Clip
             scene_clip_path = os.path.join(work_dir, f"clip_{scene_num}.mp4")
@@ -123,6 +157,10 @@ class VideoRenderer:
                     output_path=scene_clip_path,
                 )
 
+            # Verify that scene clip was generated and has non-zero size
+            if not os.path.isfile(scene_clip_path) or os.path.getsize(scene_clip_path) == 0:
+                raise RuntimeError(f"Failed to generate valid scene clip for scene {scene_num} at {scene_clip_path}")
+
             scene_clip_paths.append(scene_clip_path)
 
             if progress_callback:
@@ -132,8 +170,10 @@ class VideoRenderer:
         # 2. Concat all scene clips
         concat_list_file = os.path.join(work_dir, "concat_list.txt")
         with open(concat_list_file, "w", encoding="utf-8") as f:
-            for idx in range(len(scene_clip_paths)):
-                f.write(f"file 'clip_{idx + 1}.mp4'\n")
+            for clip_p in scene_clip_paths:
+                # Use POSIX forward slashes to ensure FFmpeg concat demuxer on Windows opens properly
+                posix_path = Path(clip_p).as_posix()
+                f.write(f"file '{posix_path}'\n")
 
         temp_concat_mp4 = os.path.join(work_dir, "concatenated.mp4")
         concat_cmd = [
@@ -154,7 +194,8 @@ class VideoRenderer:
 
         concat_res = subprocess.run(concat_cmd, cwd=work_dir, capture_output=True, text=True, timeout=120)
         if concat_res.returncode != 0 or not os.path.exists(temp_concat_mp4):
-            raise RuntimeError(f"FFmpeg scene concatenation failed: {concat_res.stderr}")
+            err_log = concat_res.stderr or concat_res.stdout
+            raise RuntimeError(f"FFmpeg scene concatenation failed (exit code {concat_res.returncode}): {err_log}")
 
         # 3. Add background music and master mix
         total_duration = self._get_media_duration(temp_concat_mp4)
@@ -164,7 +205,7 @@ class VideoRenderer:
         if progress_callback:
             progress_callback("processing_audio", "Mixing voice narration and background score", 0.85)
 
-        # Mix with sidechain ducking or volume balancing: narration 1.0, music 0.14
+        # Mix with volume balancing: narration 1.0, music 0.14
         mix_cmd = [
             self.ffmpeg_path,
             "-y",
@@ -179,9 +220,9 @@ class VideoRenderer:
             "-b:a", "192k",
             final_mp4_path,
         ]
-        mix_res = subprocess.run(mix_cmd, capture_output=True, text=True, timeout=120)
+        mix_res = subprocess.run(mix_cmd, cwd=work_dir, capture_output=True, text=True, timeout=120)
         if mix_res.returncode != 0 or not os.path.exists(final_mp4_path):
-            # If audio mix failed, copy concatenated MP4 directly
+            logger.warning("Audio mix command failed, copying concatenated video directly: %s", mix_res.stderr)
             shutil.copy(temp_concat_mp4, final_mp4_path)
 
         if progress_callback:
@@ -233,21 +274,22 @@ class VideoRenderer:
 
         # Check for user screenshot or image
         user_assets = scene.get("visual_asset_paths", [])
+        single_img = scene.get("image_asset_path")
+        if single_img and single_img not in user_assets:
+            user_assets = [single_img] + user_assets
+
         user_image_path = next((p for p in user_assets if p and os.path.exists(p) and p.lower().endswith((".png", ".jpg", ".jpeg", ".webp"))), None)
 
         if user_image_path:
             try:
                 user_img = Image.open(user_image_path).convert("RGBA")
-                # Fit image nicely into central card (contain mode to preserve aspect ratio)
                 max_w = int(width * 0.85)
                 max_h = int(height * 0.55)
                 user_img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
 
-                # Paste in center with soft rounded container frame
                 pos_x = (width - user_img.width) // 2
                 pos_y = int(height * 0.24)
 
-                # Frame background
                 draw.rounded_rectangle(
                     [pos_x - 8, pos_y - 8, pos_x + user_img.width + 8, pos_y + user_img.height + 8],
                     radius=16,
@@ -282,10 +324,10 @@ class VideoRenderer:
                 ly = card_y + 150 + (li * 40)
                 draw.rounded_rectangle([card_x + 30, ly, card_x + card_w - 60, ly + 20], radius=6, fill=(51, 65, 85, 200))
 
-        # Typography: Title, On-Screen Text, Subtitle
-        title = scene.get("scene_title", "")
-        on_screen = scene.get("on_screen_text", "")
-        cta = scene.get("call_to_action", "")
+        # Typography
+        title = scene.get("scene_title") or scene.get("title") or ""
+        on_screen = scene.get("on_screen_text") or ""
+        cta = scene.get("call_to_action") or ""
 
         # Header Badge
         if title:
@@ -300,7 +342,7 @@ class VideoRenderer:
             draw.text((int(width * 0.12), badge_y + 18), title[:40], fill=(241, 245, 249, 255))
 
         # Bottom Caption / Subtitle Text
-        caption_text = on_screen or scene.get("voice_over_narration", "")
+        caption_text = on_screen or scene.get("voice_over_narration") or scene.get("narration") or ""
         if caption_text:
             cap_y = int(height * 0.82)
             draw.rounded_rectangle(
@@ -337,7 +379,6 @@ class VideoRenderer:
     ) -> None:
         """Encodes a still slide image with smooth subtle zoom motion and synchronized audio."""
         dur = max(1.5, float(duration))
-        # Subtle zoompan motion to give scenes cinematic life
         zoom_filter = (
             f"scale={target_width}x{target_height},"
             f"zoompan=z='min(zoom+0.0006,1.06)':d={int(dur * 30)}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s={target_width}x{target_height}:fps=30"
@@ -357,9 +398,9 @@ class VideoRenderer:
             "-shortest",
             output_path,
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=os.path.dirname(output_path))
         if res.returncode != 0 or not os.path.exists(output_path):
-            # Fallback without zoompan if filter has issues
+            # Fallback without zoompan filter
             fallback_cmd = [
                 self.ffmpeg_path,
                 "-y",
@@ -375,7 +416,9 @@ class VideoRenderer:
                 "-shortest",
                 output_path,
             ]
-            subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=60)
+            fb_res = subprocess.run(fallback_cmd, capture_output=True, text=True, timeout=60, cwd=os.path.dirname(output_path))
+            if fb_res.returncode != 0:
+                raise RuntimeError(f"FFmpeg image encoding failed: {fb_res.stderr}")
 
     def _encode_video_scene_clip(
         self,
@@ -404,7 +447,9 @@ class VideoRenderer:
             "-b:a", "192k",
             output_path,
         ]
-        subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=os.path.dirname(output_path))
+        if res.returncode != 0:
+            raise RuntimeError(f"FFmpeg video encoding failed: {res.stderr}")
 
     def probe_video(self, video_path: str) -> Dict[str, Any]:
         """
@@ -432,11 +477,18 @@ class VideoRenderer:
             result["error"] = "File is 0 bytes"
             return result
 
-        cmd = [self.ffmpeg_path, "-i", video_path]
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        output = proc.stderr
+        if not self.ffmpeg_path:
+            result["error"] = "FFmpeg executable is not configured"
+            return result
 
-        # Check duration
+        cmd = [self.ffmpeg_path, "-i", video_path]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            output = proc.stderr
+        except Exception as e:
+            result["error"] = f"Failed to execute FFmpeg probe: {str(e)}"
+            return result
+
         dur_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", output)
         if dur_match:
             hours = float(dur_match.group(1))
@@ -444,7 +496,6 @@ class VideoRenderer:
             seconds = float(dur_match.group(3))
             result["duration_seconds"] = round(hours * 3600 + minutes * 60 + seconds, 2)
 
-        # Check video stream & dimensions
         vid_match = re.search(r"Video:\s*([a-zA-Z0-9_-]+).*?,\s*(\d+)x(\d+)", output)
         if vid_match:
             result["codec"] = vid_match.group(1)
@@ -468,4 +519,4 @@ class VideoRenderer:
             c = "".join(2 * ch for ch in c)
         if len(c) == 6:
             return (int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16))
-        return (37, 99, 235)  # Default blue
+        return (37, 99, 235)

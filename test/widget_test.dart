@@ -1,12 +1,16 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:appgrowth_studio/core/database/sqlite_initializer.dart';
+import 'package:appgrowth_studio/features/content_studio/domain/vimax_service.dart';
+import 'package:appgrowth_studio/features/content_studio/providers/video_creator_providers.dart';
 import 'package:appgrowth_studio/main.dart';
 
 void main() {
   setUpAll(() {
     SqliteInitializer.initialize();
+    HttpOverrides.global = null;
   });
 
   testWidgets('AppGrowthStudio desktop shell smoke test', (WidgetTester tester) async {
@@ -16,8 +20,12 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
 
     await tester.pumpWidget(
-      const ProviderScope(
-        child: AppGrowthStudioApp(),
+      ProviderScope(
+        overrides: [
+          vimaxStatusProvider.overrideWith((ref) => Future.value(ViMaxStatus.unavailable('Offline in widget test'))),
+          wan2gpStatusProvider.overrideWith((ref) => Future.value(Wan2GPStatus.offline())),
+        ],
+        child: const AppGrowthStudioApp(),
       ),
     );
 

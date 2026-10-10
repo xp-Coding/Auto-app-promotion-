@@ -1,8 +1,8 @@
 """
-AppGrowth Studio + ViMax Backend Service.
+AppGrowth Studio + ViMax & Wan2GP Backend Service.
 Local REST API and background job manager connecting Flutter desktop to
-the ViMax agentic video-generation framework, WebExtractor, AudioSynthesizer,
-and VideoRenderer.
+the ViMax agentic framework, Wan2GP local diffusion provider, WebExtractor,
+AudioSynthesizer, and VideoRenderer.
 """
 
 from __future__ import annotations
@@ -24,18 +24,24 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from backend.audio_synthesizer import AudioSynthesizer
+from backend.executable_resolver import detect_gpu_hardware, get_workspace_root, resolve_ffmpeg_path, resolve_python_path
 from backend.video_renderer import VideoRenderer
 from backend.vimax_bridge import ViMaxBridge
+from backend.vimax_provider import ViMaxProvider
+from backend.wan2gp_provider import WAN2GP_ATTRIBUTION, WAN2GP_MODELS, Wan2GPProvider
 from backend.web_extractor import WebExtractor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("backend")
 
 
 class JobManager:
     """Thread-safe background job runner and persistent state store."""
 
-    def __init__(self, persistence_file: str = "backend/jobs.json"):
-        self.persistence_file = os.path.abspath(persistence_file)
+    def __init__(self, persistence_file: Optional[str] = None):
+        root = get_workspace_root()
+        default_p = os.path.join(root, "backend", "jobs.json")
+        self.persistence_file = os.path.abspath(persistence_file or default_p)
         self.lock = threading.Lock()
         self.jobs: Dict[str, Dict[str, Any]] = self._load_jobs()
         self.active_threads: Dict[str, threading.Thread] = {}
@@ -59,11 +65,13 @@ class JobManager:
 
     def create_job(self, job_id: str, request_data: Dict[str, Any]) -> Dict[str, Any]:
         with self.lock:
+            provider = request_data.get("provider", "vimax")
             job = {
                 "job_id": job_id,
+                "provider": provider,
                 "status": "queued",
                 "stage": "queued",
-                "stage_message": "Job registered in queue",
+                "stage_message": f"Job registered in queue for {provider.upper()}",
                 "progress": 0.0,
                 "created_at": time.time(),
                 "started_at": None,
@@ -73,7 +81,7 @@ class JobManager:
                 "mp4_path": None,
                 "validation": None,
                 "error": None,
-                "logs": [f"[{time.strftime('%X')}] Job queued"],
+                "logs": [f"[{time.strftime('%X')}] Job queued ({provider})"],
             }
             self.jobs[job_id] = job
             self.cancel_flags[job_id] = False
@@ -119,7 +127,7 @@ class JobManager:
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         with self.lock:
             job = self.jobs.get(job_id)
-            if job and job.get("status") in ["queued", "generating_script", "generating_video_clips", "assembling_video", "validating_output"] and job.get("started_at"):
+            if job and job.get("status") in ["queued", "generating_script", "generating_video_clips", "assembling_video", "validating_output", "preparing_inputs"] and job.get("started_at"):
                 job["elapsed_seconds"] = round(time.time() - job["started_at"], 1)
             return job
 
@@ -142,29 +150,44 @@ class JobManager:
         return self.cancel_flags.get(job_id, False)
 
 
-# Global singletons
+# Global instances
 web_extractor = WebExtractor()
 vimax_bridge = ViMaxBridge()
 audio_synth = AudioSynthesizer()
 video_renderer = VideoRenderer()
 job_manager = JobManager()
 
+vimax_provider = ViMaxProvider()
+wan2gp_provider = Wan2GPProvider()
+
+PROVIDERS = {
+    "vimax": vimax_provider,
+    "wan2gp": wan2gp_provider,
+}
+
 
 def _run_generation_task(job_id: str, request_data: Dict[str, Any]) -> None:
     """Asynchronous background worker for video generation."""
     try:
-        job_manager.update_job(job_id, status="preparing_inputs", stage="preparing_inputs", stage_message="Preparing scene inputs and assets", log_message="Starting generation pipeline")
+        provider_name = request_data.get("provider", "vimax").lower()
+        job_manager.update_job(
+            job_id,
+            status="preparing_inputs",
+            stage="preparing_inputs",
+            stage_message=f"Preparing inputs for {provider_name.upper()} pipeline",
+            log_message=f"Starting generation pipeline via {provider_name}",
+        )
         job_manager.jobs[job_id]["started_at"] = time.time()
 
         scenes = request_data.get("scenes", [])
         archetype = request_data.get("archetype", "saas_product_ad")
         aspect_ratio = request_data.get("aspect_ratio", "9:16")
-        resolution = request_data.get("resolution", "1080p")
+        resolution = request_data.get("resolution", "720p")
         brand_color = request_data.get("brand_color", "#2563EB")
         brand_name = request_data.get("brand_name", "")
 
+        # 1. Plan Storyboard if scenes not supplied
         if not scenes:
-            # Plan storyboard if scenes not explicitly supplied
             job_manager.update_job(job_id, stage="generating_storyboard", stage_message="Planning agentic storyboard", progress=0.1)
             scenes = vimax_bridge.plan_storyboard(
                 archetype=archetype,
@@ -181,6 +204,54 @@ def _run_generation_task(job_id: str, request_data: Dict[str, Any]) -> None:
         if job_manager.is_cancelled(job_id):
             return
 
+        # 2. Wan2GP Provider Specific Execution
+        if provider_name == "wan2gp":
+            wan_health = wan2gp_provider.check_health()
+            if not wan_health["is_available"]:
+                raise RuntimeError(f"Wan2GP Provider Unavailable: {wan_health['message']}")
+
+            job_manager.update_job(
+                job_id,
+                stage="generating_video_clips",
+                stage_message=f"Generating diffusion clips via Wan2GP ({wan_health['details']['selected_model']})",
+                progress=0.2,
+                log_message=f"Wan2GP loaded: {wan_health['details']['selected_model']}",
+            )
+
+            total_scenes = len(scenes)
+            for idx, scene in enumerate(scenes):
+                if job_manager.is_cancelled(job_id):
+                    return
+                shot_prompt = scene.get("visual_generation_prompt") or scene.get("visual_description") or "Modern promotional sequence"
+                ref_img = None
+                img_assets = scene.get("visual_asset_paths", [])
+                if img_assets:
+                    ref_img = next((p for p in img_assets if p and os.path.isfile(p)), None)
+
+                clip_res = wan2gp_provider.generate_clip(
+                    shot_id=f"scene_{idx + 1}",
+                    prompt=shot_prompt,
+                    duration_seconds=float(scene.get("duration_seconds") or scene.get("duration") or 4.0),
+                    aspect_ratio=aspect_ratio,
+                    resolution=resolution,
+                    reference_image_path=ref_img,
+                )
+                if clip_res["status"] == "completed" and clip_res.get("clip_path"):
+                    scene["visual_asset_paths"] = [clip_res["clip_path"]]
+                    scene["video_clip_path"] = clip_res["clip_path"]
+                else:
+                    logger.warning("Wan2GP clip failed for scene %d: %s. Using procedural compositor fallback.", idx + 1, clip_res.get("error"))
+
+                pct = 0.2 + (0.5 * ((idx + 1) / total_scenes))
+                job_manager.update_job(
+                    job_id,
+                    stage="generating_video_clips",
+                    stage_message=f"Wan2GP completed scene {idx + 1}/{total_scenes}",
+                    progress=pct,
+                    log_message=f"Scene {idx + 1}/{total_scenes} clip ready",
+                )
+
+        # 3. Assemble and Master via VideoRenderer
         def on_render_progress(stage: str, message: str, pct: float):
             if job_manager.is_cancelled(job_id):
                 raise RuntimeError("Job cancelled by user")
@@ -210,7 +281,7 @@ def _run_generation_task(job_id: str, request_data: Dict[str, Any]) -> None:
 
     except Exception as e:
         err_msg = str(e)
-        logging.exception("Generation task failed: %s", err_msg)
+        logger.exception("Generation task failed: %s", err_msg)
         job_manager.update_job(
             job_id,
             status="failed",
@@ -222,7 +293,7 @@ def _run_generation_task(job_id: str, request_data: Dict[str, Any]) -> None:
 
 
 class ViMaxApiHandler(BaseHTTPRequestHandler):
-    """HTTP Request Handler for ViMax Local API."""
+    """HTTP Request Handler for ViMax & Wan2GP Local API."""
 
     def _send_cors_headers(self) -> None:
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -261,7 +332,33 @@ class ViMaxApiHandler(BaseHTTPRequestHandler):
         if path in ["/health", "/api/status"]:
             status_data = vimax_bridge.get_provider_status()
             status_data["jobs_count"] = len(job_manager.jobs)
+            status_data["active_providers"] = list(PROVIDERS.keys())
+            status_data["wan2gp"] = wan2gp_provider.check_health()
             return self._send_json(200, status_data)
+
+        if path == "/api/diagnostics":
+            diag = vimax_bridge.run_diagnostics()
+            diag["wan2gp_health"] = wan2gp_provider.check_health()
+            diag["providers"] = {k: p.get_provider_info() for k, p in PROVIDERS.items()}
+            return self._send_json(200, diag)
+
+        if path == "/api/providers":
+            info = {
+                "active_provider_id": "vimax",
+                "providers": [p.get_provider_info() for p in PROVIDERS.values()],
+                "wan2gp_attribution": WAN2GP_ATTRIBUTION,
+            }
+            return self._send_json(200, info)
+
+        if path == "/api/wan2gp/status":
+            return self._send_json(200, wan2gp_provider.check_health())
+
+        if path == "/api/wan2gp/models":
+            return self._send_json(200, {
+                "models": WAN2GP_MODELS,
+                "attribution": WAN2GP_ATTRIBUTION,
+                "official_repo": "https://github.com/deepbeepmeep/Wan2GP",
+            })
 
         if path == "/api/config":
             return self._send_json(200, vimax_bridge._load_config())
@@ -281,7 +378,6 @@ class ViMaxApiHandler(BaseHTTPRequestHandler):
             asset_path = query.get("path", [""])[0]
             if not asset_path or not os.path.exists(asset_path):
                 return self._send_json(404, {"error": "Asset not found"})
-            # Prevent path traversal
             real_path = os.path.abspath(asset_path)
             content_type = "application/octet-stream"
             if real_path.endswith(".mp4"):
@@ -316,6 +412,27 @@ class ViMaxApiHandler(BaseHTTPRequestHandler):
         if path == "/api/config":
             saved = vimax_bridge.save_config(body)
             return self._send_json(200, {"success": True, "config": saved})
+
+        if path == "/api/wan2gp/config":
+            saved = wan2gp_provider.save_config(body)
+            return self._send_json(200, {"success": True, "config": saved, "attribution": WAN2GP_ATTRIBUTION})
+
+        if path == "/api/wan2gp/generate-clip":
+            shot_id = body.get("shot_id", "clip_1")
+            prompt = body.get("prompt", "")
+            duration = float(body.get("duration", 4.0))
+            aspect_ratio = body.get("aspect_ratio", "9:16")
+            resolution = body.get("resolution", "720p")
+            ref_img = body.get("reference_image_path")
+            clip_res = wan2gp_provider.generate_clip(
+                shot_id=shot_id,
+                prompt=prompt,
+                duration_seconds=duration,
+                aspect_ratio=aspect_ratio,
+                resolution=resolution,
+                reference_image_path=ref_img,
+            )
+            return self._send_json(200, clip_res)
 
         if path == "/api/web/extract":
             url = body.get("url", "")
@@ -355,11 +472,12 @@ class ViMaxApiHandler(BaseHTTPRequestHandler):
             return self._send_json(200, {"scene": updated})
 
         if path == "/api/video/generate":
-            job_id = f"vimax_job_{int(time.time() * 1000)}"
+            provider = body.get("provider", "vimax")
+            job_id = f"{provider}_job_{int(time.time() * 1000)}"
             job = job_manager.create_job(job_id, body)
             worker = threading.Thread(target=_run_generation_task, args=(job_id, body), daemon=True)
             worker.start()
-            return self._send_json(202, {"job_id": job_id, "status": "queued"})
+            return self._send_json(202, {"job_id": job_id, "provider": provider, "status": "queued"})
 
         if path.startswith("/api/jobs/") and path.endswith("/cancel"):
             parts = path.split("/")
@@ -393,11 +511,11 @@ class ViMaxApiHandler(BaseHTTPRequestHandler):
 def run_server(host: str = "127.0.0.1", port: int = 8765) -> None:
     server_address = (host, port)
     httpd = ThreadingHTTPServer(server_address, ViMaxApiHandler)
-    logging.info("🚀 AppGrowth Studio + ViMax Backend Service running on http://%s:%d", host, port)
+    logger.info("🚀 AppGrowth Studio + ViMax & Wan2GP Backend Service running on http://%s:%d", host, port)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        logging.info("Shutting down ViMax Backend Service...")
+        logger.info("Shutting down Backend Service...")
         httpd.server_close()
 
 
