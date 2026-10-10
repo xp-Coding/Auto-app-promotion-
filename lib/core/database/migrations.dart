@@ -2,7 +2,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// Database schema definitions and migrations for AppGrowth Studio.
 class DatabaseMigrations {
-  static const int currentVersion = 1;
+  static const int currentVersion = 3;
 
   static Future<void> onCreate(Database db, int version) async {
     final batch = db.batch();
@@ -273,10 +273,112 @@ class DatabaseMigrations {
       );
     ''');
 
+    // 17. autopilot_runs (v2)
+    batch.execute('''
+      CREATE TABLE autopilot_runs (
+        id TEXT PRIMARY KEY,
+        app_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'running', -- running, paused, completed, failed
+        current_step TEXT NOT NULL,
+        progress REAL NOT NULL DEFAULT 0.0,
+        total_posts_created INTEGER NOT NULL DEFAULT 0,
+        total_jobs_queued INTEGER NOT NULL DEFAULT 0,
+        total_assets_created INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+      );
+    ''');
+    batch.execute('CREATE INDEX idx_autopilot_app ON autopilot_runs(app_id);');
+
+    // 18. autopilot_settings (v2/v3)
+    batch.execute('''
+      CREATE TABLE autopilot_settings (
+        id TEXT PRIMARY KEY,
+        is_autopilot_enabled INTEGER NOT NULL DEFAULT 1,
+        require_approval_before_publish INTEGER NOT NULL DEFAULT 0,
+        daily_post_limit INTEGER NOT NULL DEFAULT 2,
+        weekly_post_limit INTEGER NOT NULL DEFAULT 14,
+        posting_time_utc TEXT NOT NULL DEFAULT '18:00',
+        target_platforms TEXT NOT NULL DEFAULT '["youtube","tiktok","instagram"]',
+        content_languages TEXT NOT NULL DEFAULT '["en"]',
+        ai_provider TEXT NOT NULL DEFAULT 'template', -- template, gemini, openai, local
+        ai_api_key TEXT,
+        ai_model_name TEXT,
+        video_format TEXT NOT NULL DEFAULT 'both', -- 9:16, 16:9, both
+        time_zone TEXT NOT NULL DEFAULT 'UTC',
+        max_retry_attempts INTEGER NOT NULL DEFAULT 3,
+        retry_delay_seconds INTEGER NOT NULL DEFAULT 60,
+        content_themes TEXT NOT NULL DEFAULT '["Feature Showcase","Problem & Solution","Quick Tutorials","App Updates","Tips & Tricks"]',
+        target_audience TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    ''');
+
     await batch.commit(noResult: true);
   }
 
   static Future<void> onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // Incremental migrations will be placed here
+    if (oldVersion < 2) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS autopilot_runs (
+          id TEXT PRIMARY KEY,
+          app_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'running',
+          current_step TEXT NOT NULL,
+          progress REAL NOT NULL DEFAULT 0.0,
+          total_posts_created INTEGER NOT NULL DEFAULT 0,
+          total_jobs_queued INTEGER NOT NULL DEFAULT 0,
+          total_assets_created INTEGER NOT NULL DEFAULT 0,
+          error_message TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (app_id) REFERENCES apps(id) ON DELETE CASCADE
+        );
+      ''');
+      await db.execute('CREATE INDEX IF NOT EXISTS idx_autopilot_app ON autopilot_runs(app_id);');
+
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS autopilot_settings (
+          id TEXT PRIMARY KEY,
+          is_autopilot_enabled INTEGER NOT NULL DEFAULT 1,
+          require_approval_before_publish INTEGER NOT NULL DEFAULT 0,
+          daily_post_limit INTEGER NOT NULL DEFAULT 2,
+          weekly_post_limit INTEGER NOT NULL DEFAULT 14,
+          posting_time_utc TEXT NOT NULL DEFAULT '18:00',
+          target_platforms TEXT NOT NULL DEFAULT '["youtube","tiktok","instagram"]',
+          content_languages TEXT NOT NULL DEFAULT '["en"]',
+          ai_provider TEXT NOT NULL DEFAULT 'template',
+          ai_api_key TEXT,
+          ai_model_name TEXT,
+          video_format TEXT NOT NULL DEFAULT 'both',
+          time_zone TEXT NOT NULL DEFAULT 'UTC',
+          max_retry_attempts INTEGER NOT NULL DEFAULT 3,
+          retry_delay_seconds INTEGER NOT NULL DEFAULT 60,
+          content_themes TEXT NOT NULL DEFAULT '["Feature Showcase","Problem & Solution","Quick Tutorials","App Updates","Tips & Tricks"]',
+          target_audience TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+      ''');
+    }
+
+    if (oldVersion < 3) {
+      // Safe column additions for existing v2 databases
+      final cols = [
+        "ALTER TABLE autopilot_settings ADD COLUMN time_zone TEXT NOT NULL DEFAULT 'UTC';",
+        "ALTER TABLE autopilot_settings ADD COLUMN max_retry_attempts INTEGER NOT NULL DEFAULT 3;",
+        "ALTER TABLE autopilot_settings ADD COLUMN retry_delay_seconds INTEGER NOT NULL DEFAULT 60;",
+        "ALTER TABLE autopilot_settings ADD COLUMN content_themes TEXT NOT NULL DEFAULT '[\"Feature Showcase\",\"Problem & Solution\",\"Quick Tutorials\",\"App Updates\",\"Tips & Tricks\"]';",
+        "ALTER TABLE autopilot_settings ADD COLUMN target_audience TEXT;",
+      ];
+      for (final sql in cols) {
+        try {
+          await db.execute(sql);
+        } catch (_) {}
+      }
+    }
   }
 }

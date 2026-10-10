@@ -16,6 +16,7 @@ import '../publishing/presentation/social_accounts_screen.dart';
 import '../analytics/presentation/analytics_screen.dart';
 import '../../core/logging/activity_logs_screen.dart';
 import '../settings/presentation/settings_screen.dart';
+import '../autopilot/presentation/autopilot_studio_screen.dart';
 
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.dark);
 final sidebarCollapsedProvider = StateProvider<bool>((ref) => false);
@@ -43,7 +44,7 @@ class DesktopShell extends ConsumerWidget {
       _NavItem(Icons.schedule_send_outlined, Icons.schedule_send, 'Publishing Queue'),
       _NavItem(Icons.account_tree_outlined, Icons.account_tree, 'Social Accounts'),
       _NavItem(Icons.insights_outlined, Icons.insights, 'Analytics'),
-      _NavItem(Icons.rule_outlined, Icons.rule, 'Automation Rules'),
+      _NavItem(Icons.rocket_launch_outlined, Icons.rocket_launch, 'Autopilot Studio'),
       _NavItem(Icons.list_alt_outlined, Icons.list_alt, 'Activity Logs'),
       _NavItem(Icons.settings_outlined, Icons.settings, 'Settings'),
     ];
@@ -320,11 +321,7 @@ class DesktopShell extends ConsumerWidget {
       case 9:
         return const AnalyticsScreen();
       case 10:
-        return const _MilestonePlaceholder(
-          title: 'Automation Rules',
-          milestoneNumber: 8,
-          description: 'Local automation rules, queue triggers, scheduled status checks, and data refresh.',
-        );
+        return const AutopilotStudioScreen();
       case 11:
         return const ActivityLogsScreen();
       case 12:
@@ -341,69 +338,4 @@ class _NavItem {
   final String title;
 
   _NavItem(this.icon, this.activeIcon, this.title);
-}
-
-class _MilestonePlaceholder extends StatelessWidget {
-  final String title;
-  final int milestoneNumber;
-  final String description;
-
-  const _MilestonePlaceholder({
-    required this.title,
-    required this.milestoneNumber,
-    required this.description,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Card(
-        child: Container(
-          width: 540,
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryIndigo.withOpacity(0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.construction, size: 40, color: AppTheme.primaryIndigo),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                title,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppTheme.accentCyan.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  'Scheduled for Milestone $milestoneNumber',
-                  style: const TextStyle(color: AppTheme.accentCyan, fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                description,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 13, color: AppTheme.darkTextSecondary, height: 1.4),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Milestone 1 foundation & SQLite persistence active.',
-                style: TextStyle(fontSize: 11, color: AppTheme.darkTextSecondary),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }

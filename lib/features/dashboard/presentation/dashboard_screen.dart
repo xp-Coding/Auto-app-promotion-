@@ -69,6 +69,20 @@ class DashboardScreen extends ConsumerWidget {
                     ),
                     const SizedBox(width: 12),
                     ElevatedButton.icon(
+                      icon: const Icon(Icons.rocket_launch, size: 18),
+                      label: const Text('Start Autopilot'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryIndigo,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: () {
+                        if (onNavigateTab != null) {
+                          onNavigateTab!(10); // Index of Autopilot Studio
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
                       icon: const Icon(Icons.add, size: 18),
                       label: const Text('Register App'),
                       onPressed: () => AppFormDialog.show(context),
@@ -77,7 +91,64 @@ class DashboardScreen extends ConsumerWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
+
+            // Autopilot Quick Launch Card
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    AppTheme.primaryIndigo.withOpacity(0.18),
+                    AppTheme.accentCyan.withOpacity(0.08),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppTheme.primaryIndigo.withOpacity(0.35)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppTheme.primaryIndigo.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.bolt, color: AppTheme.primaryIndigo, size: 24),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          '⚡ 1-Click App Promotion Autopilot',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'Provide a Google Play Store URL. The system scrapes details, discovers keywords, creates 30 days of posts, renders local assets, and schedules to the queue automatically.',
+                          style: TextStyle(fontSize: 12, color: AppTheme.darkTextSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.rocket_launch, size: 16),
+                    label: const Text('Launch Autopilot'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryIndigo,
+                      foregroundColor: Colors.white,
+                    ),
+                    onPressed: () {
+                      if (onNavigateTab != null) onNavigateTab!(10);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
 
             // Top Metric Cards (Real SQLite data)
             metricsAsync.when(
